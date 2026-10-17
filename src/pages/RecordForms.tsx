@@ -1,4 +1,5 @@
 import { RecordFormPage, type RecordFormConfig } from '../components/RecordFormPage';
+import { getStoredUser } from '../api/portalApi';
 
 const LOOKUPS = '/api/portal/modules/lookups';
 
@@ -192,6 +193,12 @@ const klass: RecordFormConfig = {
 
 // ── Student (create) ─────────────────────────────────────────────────────────
 
+// Mirrors StudentsIndividual.aspx (add path): every P_Student_Insert parameter
+// the legacy form sets, same defaults (Group + Active checked, phone codes 961,
+// nationality Lebanese, primary location = signed-in user's location, DOB
+// blank, starting date today, "Send Welcome Email" on). POST returns the new
+// id → open the student's page; "Save and Register" goes to the private
+// package form when Private is ticked, else to a new group registration.
 const student: RecordFormConfig = {
   title: 'Student',
   listPath: '/students',
@@ -199,52 +206,135 @@ const student: RecordFormConfig = {
   idKey: 'StudentId',
   titleKey: 'StudentFullName',
   lookups: LOOKUPS,
+  datalists: '/api/portal/students/autocomplete',
   heroSlide: 2,
-  createDefaults: {
+  createDefaults: () => ({
     StudentActive: true,
     StudentDeleted: false,
-    StudentDateOfBirth: '2015-01-01',
+    StudentGroupSwimmer: true,
     StudentStartingDate: new Date().toISOString().slice(0, 10),
     StudentPhoneNumberCode1: '961',
+    StudentPhoneNumberCode2: '961',
     StudentNationality1: 'Lebanese',
+    StudentPrimaryLocationId: getStoredUser()?.primaryLocationId ?? 0,
+    SendWelcomeEmail: true,
+  }),
+  // Legacy BtnDuplicate: ?StudentIDDuplicate=<id> prefilled everything except
+  // first name, facebook, blood type, coach, DOB, starting date (and the photo).
+  duplicate: {
+    param: 'duplicateOf',
+    load: (id) => `/api/portal/students/${id}`,
+    omit: ['StudentFirstName', 'StudentFacebookAccount', 'StudentBloodTypeId', 'StudentPrimaryCoachId',
+      'StudentDateOfBirth', 'StudentStartingDate', 'SendWelcomeEmail'],
   },
+  validate: (f) => {
+    const blank = (k: string) => String(f[k] ?? '').trim() === '';
+    if (blank('StudentFirstName')) return 'First name is required.';
+    if (blank('StudentLastName')) return 'Last name is required.';
+    if (blank('StudentPhoneNumber1')) return 'Phone 1 is required.';
+    if (blank('StudentDateOfBirth')) return 'Date of birth is required.';
+    if (blank('StudentStartingDate')) return 'Starting date is required.';
+    return null;
+  },
+  // POST /api/portal/edit/student → { ok, id, studentId, message }
+  onCreated: (res) => `/students/${res.id ?? res.studentId}`,
+  extraActions: [
+    {
+      label: 'Save and Register',
+      path: (res, f) => f.StudentPrivateSwimmer === true
+        ? `/privates/new?studentId=${res.id ?? res.studentId}`
+        : `/registrations/new?studentId=${res.id ?? res.studentId}`,
+    },
+  ],
   sections: [
     {
       title: 'Personal',
       fields: [
-        { key: 'StudentFirstName', label: 'First name', type: 'text' },
-        { key: 'StudentMiddleName', label: 'Middle name', type: 'text' },
-        { key: 'StudentLastName', label: 'Last name', type: 'text' },
+        { key: 'StudentFirstName', label: 'First name *', type: 'text', datalist: 'firstNames' },
+        { key: 'StudentMiddleName', label: 'Middle name', type: 'text', datalist: 'firstNames' },
+        { key: 'StudentLastName', label: 'Last name *', type: 'text', datalist: 'lastNames' },
         { key: 'StudentGender', label: 'Gender', type: 'select', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }] },
-        { key: 'StudentDateOfBirth', label: 'Date of birth', type: 'date' },
+        { key: 'StudentDateOfBirth', label: 'Date of birth *', type: 'date' },
         { key: 'StudentBloodTypeId', label: 'Blood type', type: 'select', optionsKey: 'bloodTypes' },
-        { key: 'StudentSchool', label: 'School', type: 'text' },
-        { key: 'StudentNationality1', label: 'Nationality', type: 'text' },
+        { key: 'StudentSchool', label: 'School', type: 'text', datalist: 'schools' },
+        { key: 'StudentNationality1', label: 'Nationality 1', type: 'text', datalist: 'nationalities' },
+        { key: 'StudentNationality2', label: 'Nationality 2', type: 'text', datalist: 'nationalities' },
+        { key: 'StudentMomOccupation', label: 'Mom occupation', type: 'text', datalist: 'occupations' },
+        { key: 'StudentDadOccupation', label: 'Dad occupation', type: 'text', datalist: 'occupations' },
       ],
     },
     {
       title: 'Contact',
       fields: [
-        { key: 'StudentPhoneNumberCode1', label: 'Phone code', type: 'text' },
-        { key: 'StudentPhoneNumber1', label: 'Phone', type: 'text' },
+        { key: 'StudentPhoneNumberCode1', label: 'Phone code 1', type: 'text' },
+        { key: 'StudentPhoneNumber1', label: 'Phone 1 *', type: 'text' },
+        { key: 'StudentPhoneNumberCode2', label: 'Phone code 2', type: 'text' },
+        { key: 'StudentPhoneNumber2', label: 'Phone 2', type: 'text' },
         { key: 'StudentEmail', label: 'Email', type: 'text' },
-        { key: 'StudentAddressCity', label: 'City', type: 'text' },
+        { key: 'StudentEmail2', label: 'Email 2', type: 'text' },
+        { key: 'StudentFacebookAccount', label: 'Facebook', type: 'text' },
+        { key: 'StudentParentFacebook', label: 'Parent Facebook', type: 'text' },
+      ],
+    },
+    {
+      title: 'Address',
+      fields: [
+        { key: 'StudentAddressCity', label: 'City', type: 'text', datalist: 'cities' },
+        { key: 'StudentAddressRegion', label: 'Region', type: 'text', datalist: 'regions' },
+        { key: 'StudentAddressStreet', label: 'Street', type: 'text', datalist: 'streets' },
+        { key: 'StudentAddressBuilding', label: 'Building', type: 'text' },
+        { key: 'StudentAddressFloor', label: 'Floor', type: 'text' },
       ],
     },
     {
       title: 'Swimming',
       fields: [
+        { key: 'StudentStartingDate', label: 'Starting date *', type: 'date' },
+        { key: 'StudentPrimaryCoachId', label: 'Primary coach', type: 'select', optionsKey: 'coaches' },
         { key: 'StudentPrimaryLocationId', label: 'Primary location', type: 'select', optionsKey: 'locations' },
-        { key: 'StudentStartingDate', label: 'Starting date', type: 'date' },
+        { key: 'StudentPrimaryLocationId2', label: 'Location 2', type: 'select', optionsKey: 'locations' },
+        { key: 'StudentPrimaryLocationId3', label: 'Location 3', type: 'select', optionsKey: 'locations' },
+        { key: 'StudentStartingCoach', label: 'Starting coach', type: 'text', datalist: 'startingCoaches' },
+        { key: 'StudentStartingLocation', label: 'Starting location', type: 'text', datalist: 'startingLocations' },
+      ],
+    },
+    {
+      title: 'Programs Enrolled In',
+      fields: [
         { key: 'StudentGroupSwimmer', label: 'Group Training', type: 'checkbox' },
         { key: 'StudentPrivateSwimmer', label: 'Private Training', type: 'checkbox' },
+        { key: 'StudentEliteSwimmer', label: 'Competitive Team', type: 'checkbox' },
+        { key: 'StudentAquaBabySwimmer', label: 'AquaBaby', type: 'checkbox' },
+        { key: 'StudentAquaGymSwimmer', label: 'AquaGym', type: 'checkbox' },
         { key: 'StudentSchoolSwimmer', label: 'School', type: 'checkbox' },
+        { key: 'StudentGiftedSwimmer', label: 'Gifted', type: 'checkbox' },
+        { key: 'StudentOthersSwimmer', label: 'Others', type: 'checkbox' },
+        { key: 'StudentWaitingList', label: 'Waiting list', type: 'checkbox' },
         { key: 'StudentActive', label: 'Active', type: 'checkbox' },
       ],
     },
     {
-      title: 'Notes',
-      fields: [{ key: 'StudentNotes', label: 'Notes', type: 'textarea' }],
+      title: 'Website & Messaging',
+      fields: [
+        { key: 'StudentShowOnline', label: 'Show online', type: 'checkbox' },
+        { key: 'StudentShowChampion', label: 'Champion (show in proswimmers page)', type: 'checkbox' },
+        { key: 'StudentShowWallofFame', label: 'Wall of Fame (show in WallofFame page)', type: 'checkbox' },
+        { key: 'StudentShowSpecial', label: 'Show special (priority, show on top)', type: 'checkbox' },
+        { key: 'StudentSpecialText', label: 'Special text', type: 'text' },
+        { key: 'StudentNoBulkWA', label: 'No bulk WhatsApp', type: 'checkbox' },
+        { key: 'StudentNoBulkEmail', label: 'No bulk email', type: 'checkbox' },
+        { key: 'SendWelcomeEmail', label: 'Send Welcome Email (to email 1 and 2)', type: 'checkbox' },
+      ],
+    },
+    {
+      title: 'Health & Notes',
+      fields: [
+        { key: 'StudentDifficulty', label: 'Difficulty (special case)', type: 'checkbox' },
+        { key: 'StudentDifficultyRemarks', label: 'Difficulty remarks', type: 'textarea' },
+        { key: 'StudentVaccinated', label: 'Vaccinated', type: 'checkbox' },
+        { key: 'StudentVaccinatedRemarks', label: 'Vaccination remarks', type: 'textarea' },
+        { key: 'StudentNotes', label: 'Notes', type: 'textarea' },
+      ],
     },
   ],
 };
@@ -303,15 +393,38 @@ const packType: RecordFormConfig = {
   createDefaults: {
     PrivatePackageCurrency: 'LBP',
     PrivatePackageSessionsCount: 10,
+    PrivatePackagePriceForOneStudent: 0,
+    PrivatePackagePriceForTwoStudents: 0,
+    PrivatePackagePriceForThreeStudents: 0,
     PrivatePackageActive: true,
+  },
+  // Legacy PrivatePackagesSettingsIndividual validators: name required,
+  // sessions/prices ^[0-9]*$ (int.Parse on save, so blank is rejected too).
+  validate: (f) => {
+    if (!String(f.PrivatePackageName ?? '').trim()) return 'Package name is required.';
+    const ints: [string, string][] = [
+      ['PrivatePackageSessionsCount', 'Sessions'],
+      ['PrivatePackagePriceForOneStudent', 'Price For One'],
+      ['PrivatePackagePriceForTwoStudents', 'Price For Two'],
+      ['PrivatePackagePriceForThreeStudents', 'Price For Three'],
+    ];
+    for (const [key, label] of ints) {
+      const v = f[key];
+      if (v === '' || v == null || !Number.isInteger(Number(v)) || Number(v) < 0)
+        return `${label} must be a whole number.`;
+    }
+    return null;
   },
   sections: [
     {
       title: 'Package Type',
       fields: [
-        { key: 'PrivatePackageLocationId', label: 'Location', type: 'select', optionsKey: 'locations' },
+        // Location: defaults to ?locationId= from the list (else the user's own
+        // location), locked for 'user' accounts, immutable once created.
+        { key: 'PrivatePackageLocationId', label: 'Location', type: 'select', optionsKey: 'locations',
+          urlParam: 'locationId', defaultToUserLocation: true, lockedFor: ['user'], readOnlyOnEdit: true },
         { key: 'PrivatePackageName', label: 'Package Name', type: 'text' },
-        { key: 'PrivatePackageCurrency', label: 'Currency (fixed after create)', type: 'select', options: [
+        { key: 'PrivatePackageCurrency', label: 'Currency', hint: 'fixed after create', type: 'select', readOnlyOnEdit: true, options: [
           { value: 'LBP', label: 'LBP' }, { value: 'USD', label: 'USD' },
         ] },
         { key: 'PrivatePackageSessionsCount', label: 'Sessions', type: 'number' },

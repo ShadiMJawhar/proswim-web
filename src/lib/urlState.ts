@@ -22,9 +22,11 @@ type Widen<T> = T extends string ? string : T extends number ? number : T extend
  * boolean) and the URL value is decoded back to it, so existing handlers such
  * as `setLocationId(Number(e.target.value))` keep compiling unchanged.
  *
- * The setter accepts a value or an updater fn, and writes through the
- * functional form of setSearchParams so two filters set in the same event
- * handler (e.g. `setDateFrom(x); setDay('')`) don't overwrite each other.
+ * The setter accepts a value or an updater fn. Caution: react-router's
+ * functional setSearchParams hands back the params captured at render, so two
+ * single-key setters called in the same event handler each start from the
+ * same stale copy and the second navigation drops the first key. To change
+ * several keys at once use `useUrlPatch` below.
  * Note: unlike a useState setter its identity is not stable, so don't list it
  * in effect dependency arrays.
  */
@@ -61,4 +63,21 @@ export function useUrlState<T extends Prim>(
   };
 
   return [value, set];
+}
+
+/**
+ * Multi-key setter: writes every key of `patch` in ONE navigation, so e.g.
+ * `patch({ dateFrom, dateTo })` keeps both (see the caution on useUrlState).
+ */
+export function useUrlPatch(): (patch: Record<string, Prim>) => void {
+  const [, setParams] = useSearchParams();
+  return (patch) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [k, v] of Object.entries(patch)) next.set(k, String(v));
+        return next;
+      },
+      { replace: true },
+    );
 }

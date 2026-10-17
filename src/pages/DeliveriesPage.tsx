@@ -3,10 +3,17 @@
 // an expandable detail (linked payment/expense lines), and a create flow that
 // checks off undelivered lines and recomputes totals live (far simpler in React
 // than the WebForms postback dance it replaces).
+//
+// The private variant mirrors PrivatePaymentDeliverysIndividual.aspx closely:
+// location pinned to the user's primary location unless SiteMaster, editable
+// generated/received dates, SiteMaster-only "Closed" on create, the per-currency
+// split label, Cash/CC/Chq row colours, sortable 25-row paged list with a
+// SiteMaster footer total, and a printable receipt per delivery.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
-  Loader2, AlertCircle, Plus, X, Truck, ChevronDown, ChevronRight, Lock, Unlock, Download,
+  Loader2, AlertCircle, Plus, X, Truck, ChevronDown, ChevronRight, ChevronLeft, Lock, Unlock, Download,
+  Printer, ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
@@ -16,14 +23,33 @@ import { PageHero } from '../components/PageHero';
 type Row = Record<string, unknown>;
 type Option = { value: number; label: string };
 
-const num = (r: Row, k: string) => Number(r[k] ?? 0);
-const str = (r: Row, k: string) => (r[k] == null ? '' : String(r[k]));
+// Proc columns keep their SQL casing and it differs between procs
+// (Privatepaymentid / paidamount / Currency from the undelivered proc versus
+// PaidAmount / currency from the delivery lines proc), so every read is
+// case-insensitive.
+const pick = (r: Row, k: string): unknown => {
+  if (k in r) return r[k];
+  const lk = k.toLowerCase();
+  for (const key of Object.keys(r)) if (key.toLowerCase() === lk) return r[key];
+  return undefined;
+};
+const num = (r: Row, k: string) => Number(pick(r, k) ?? 0);
+const str = (r: Row, k: string) => { const v = pick(r, k); return v == null ? '' : String(v); };
+const flag = (r: Row, k: string) => pick(r, k) === true;
 const money = (v: unknown) => (v == null ? '-' : Number(v).toLocaleString());
+// Legacy "###,###,##0" and "###,###,##0.##" formats.
+const money0 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+const money2 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const pad = (n: number) => String(n).padStart(2, '0');
 const dmy = (v: unknown) => {
   if (!v) return '-';
   const d = new Date(String(v));
   if (isNaN(d.getTime())) return '-';
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+};
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 interface Variant {
@@ -38,6 +64,9 @@ interface Variant {
   hasSemester: boolean;     // group deliveries filter/group by semester
   paymentsKey: string;      // header totals column for payments
   issuedToKey: string;
+  isPrivate: boolean;       // private-delivery rules (location lock, split, print, paging)
+  lineIdKeys: string[];     // id column of a candidate/line row, first present wins
+  pageSize: number;         // legacy GridView PageSize (Infinity = no paging)
 }
 
 const GROUP: Variant = {
@@ -52,6 +81,9 @@ const GROUP: Variant = {
   hasSemester: true,
   paymentsKey: 'PaymentDeliveryTotalPayments',
   issuedToKey: 'PaymentIssuedTo',
+  isPrivate: false,
+  lineIdKeys: ['IndividualID'],
+  pageSize: Infinity,
 };
 
 const PRIVATE: Variant = {
@@ -66,18 +98,161 @@ const PRIVATE: Variant = {
   hasSemester: false,
   paymentsKey: 'PrivatePaymentDeliveryTotalPayments',
   issuedToKey: 'PrivatePaymentIssuedTo',
+  isPrivate: true,
+  // P_PrivatePaymentDelivery_Payments_NotDelivered_Select keys rows on
+  // Privatepaymentid (the group proc uses IndividualID).
+  lineIdKeys: ['Privatepaymentid', 'IndividualID'],
+  pageSize: 25,
 };
+
+function lineId(l: Row, variant: Variant): number {
+  for (const k of variant.lineIdKeys) {
+    const v = pick(l, k);
+    if (v != null && v !== '') return Number(v);
+  }
+  return 0;
+}
+
+// Legacy LblPrivatePaymentsSplit: paid amounts per currency, plus the share
+// coming from rows whose Mode is not "Private Payment" (extra classes).
+function currencySplit(lines: Row[]): string {
+  let lbp = 0, usd = 0, exLbp = 0, exUsd = 0;
+  for (const l of lines) {
+    const cur = str(l, 'Currency').toUpperCase();
+    const paid = num(l, 'PaidAmount');
+    const extra = str(l, 'Mode').toLowerCase() !== 'private payment';
+    if (cur === 'LBP') { lbp += paid; if (extra) exLbp += paid; }
+    else if (cur === 'USD') { usd += paid; if (extra) exUsd += paid; }
+  }
+  let text = `[ LBP ${money2(lbp)} + USD ${money2(usd)} ]`;
+  if (exLbp + exUsd > 0) text += `  [Ex-Cls LBP ${money2(exLbp)} + USD ${money2(exUsd)}]`;
+  return text;
+}
+
+// Legacy RowDataBound colours: Cash #66C866, CC #99C899, Chq #CCC8CC, each
+// lightened when the Mode is not "Private Payment". Later matches win there
+// (cash, then cc, then chq), hence the reversed test order.
+function typeRowClass(l: Row): string {
+  const t = str(l, 'Type').toLowerCase();
+  const soft = str(l, 'Mode').toLowerCase() !== 'private payment';
+  if (t.includes('chq')) return soft ? 'bg-stone-100' : 'bg-stone-200';
+  if (t.includes('cc')) return soft ? 'bg-emerald-100' : 'bg-emerald-200';
+  if (t.includes('cash')) return soft ? 'bg-green-100' : 'bg-green-300';
+  return '';
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+
+// Reproduces the legacy BtnPrint receipt (PrivatePaymentDeliverysIndividual.aspx.cs).
+function buildPrintHtml(header: Row, lines: Row[]): string {
+  const cell = (v: string, bold = false) => `<td align="center">${bold ? '<b>' : ''}${esc(v)}${bold ? '</b>' : ''}</td>`;
+  const lineRow = (l: Row) => `<tr>${cell(str(l, 'Mode'))}${cell(str(l, 'Type'))}${cell(dmy(pick(l, 'PEDate')))}`
+    + `${cell(money0(num(l, 'Amount')), true)}${cell(money2(num(l, 'PaidAmount')), true)}${cell(str(l, 'Currency'), true)}`
+    + `${cell(str(l, 'PrivatePaymentIssuedTo') || str(l, 'PaymentIssuedTo'))}</tr>`;
+  const isExpense = (l: Row) => str(l, 'Mode').toLowerCase() === 'expense';
+  const payments = lines.filter((l) => !isExpense(l));
+  const expenses = lines.filter(isExpense);
+  const tableHead = '<tr><td align="center">Mode</td><td align="center">Type</td><td align="center">Date</td>'
+    + '<td align="center"><b>USD</b></td><td align="center"><b>PaidAmount</b></td><td align="center"><b>Currency</b></td>'
+    + '<td align="center">Issued To</td></tr>';
+  const serial = str(header, 'PrivatePaymentDeliverySerialNumber');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Private Payment Delivery ${esc(serial)}</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;font-size:13px;margin:24px}table{border-collapse:separate}
+table.lines td{padding:4px 8px}h2,h3{margin:8px 0}</style></head><body>
+<table cellspacing="3" cellpadding="3" width="100%">
+<tr><td colspan="2"><h2>Private Package</h2></td><td colspan="2" align="right">Swimming Classes</td></tr>
+<tr><td style="width:90px"></td><td style="width:200px"></td><td style="width:120px"></td><td style="width:150px"></td></tr>
+<tr><td align="left">Serial Number:</td><td align="left"><b>${esc(serial)}</b></td>
+<td align="left">Amount:</td><td align="left"><u><i><b>${esc(money2(num(header, 'PrivatePaymentDeliveryAmount')))}</b></i></u></td></tr>
+<tr><td align="left">Location:</td><td align="left"><b>${esc(str(header, 'LocationNickName'))}</b></td></tr>
+<tr><td align="left">Generated On:</td><td align="left"><b>${esc(dmy(pick(header, 'PrivatePaymentDeliveryGenerationDate')))}</b></td>
+<td align="left">Recieved On:</td><td align="left"><b>${esc(dmy(pick(header, 'PrivatePaymentDeliveryRecievedDate')))}</b></td></tr>
+<tr><td align="left">Remarks:</td><td align="left"><b>${esc(str(header, 'PrivatePaymentDeliveryRemarks'))}</b></td></tr>
+<tr><td colspan="2"><h3>Private Payment Delivery Details</h3></td><td colspan="2" align="right"></td></tr>
+<tr><td colspan="4" align="left"><p><b>${esc(currencySplit(lines))}</b></p></td></tr>
+<tr><td colspan="4" align="left"><table class="lines" width="90%" border="1" style="border-style:solid">${tableHead}${payments.map(lineRow).join('')}</table></td></tr>
+${expenses.length > 0 ? `<tr><td colspan="4" align="center"><table class="lines" width="90%" border="1" style="border-style:solid">${expenses.map(lineRow).join('')}</table></td></tr>` : ''}
+</table></body></html>`;
+}
+
+// Client-side sort + page machinery (legacy sorted/paged the cached DataTable).
+function useGrid(rows: Row[], pageSize: number) {
+  const [sortKey, setSortKey] = useState('');
+  const [sortAsc, setSortAsc] = useState(true);
+  const [page, setPage] = useState(0);
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return rows;
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const va = pick(a, sortKey), vb = pick(b, sortKey);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const cmp = typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb), undefined, { sensitivity: 'base', numeric: true });
+      return sortAsc ? cmp : -cmp;
+    });
+    return arr;
+  }, [rows, sortKey, sortAsc]);
+
+  const pages = Number.isFinite(pageSize) ? Math.max(1, Math.ceil(sorted.length / pageSize)) : 1;
+  const safePage = Math.min(page, pages - 1);
+  const pageRows = Number.isFinite(pageSize) ? sorted.slice(safePage * pageSize, (safePage + 1) * pageSize) : sorted;
+
+  function toggleSort(key: string) {
+    if (sortKey === key) setSortAsc((v) => !v);
+    else { setSortKey(key); setSortAsc(true); }
+    setPage(0);
+  }
+  return { sorted, pageRows, pages, page: safePage, setPage, sortKey, sortAsc, toggleSort };
+}
+type Grid = ReturnType<typeof useGrid>;
+
+function SortHeader({ label, k, grid, align = 'left' }: { label: string; k: string; grid: Grid; align?: 'left' | 'right' | 'center' }) {
+  const just = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : '';
+  return (
+    <th className={`text-${align}`}>
+      <button type="button" onClick={() => grid.toggleSort(k)} className={`flex w-full items-center gap-1 hover:text-slate-600 ${just}`}>
+        {label}
+        {grid.sortKey === k
+          ? grid.sortAsc ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />
+          : <ArrowUpDown className="size-3 opacity-30" />}
+      </button>
+    </th>
+  );
+}
+
+function Pager({ grid, total }: { grid: Grid; total: number }) {
+  if (grid.pages <= 1) return null;
+  return (
+    <div className="flex items-center justify-end gap-2 p-3 text-sm text-slate-500">
+      <span>{total.toLocaleString()} rows · page {grid.page + 1} / {grid.pages}</span>
+      <button onClick={() => grid.setPage(Math.max(0, grid.page - 1))} disabled={grid.page === 0}
+        className="rounded border border-slate-200 p-1 disabled:opacity-30"><ChevronLeft className="size-4" /></button>
+      <button onClick={() => grid.setPage(Math.min(grid.pages - 1, grid.page + 1))} disabled={grid.page >= grid.pages - 1}
+        className="rounded border border-slate-200 p-1 disabled:opacity-30"><ChevronRight className="size-4" /></button>
+    </div>
+  );
+}
 
 function DeliveriesPage({ variant }: { variant: Variant }) {
   const user = getStoredUser();
   const userType = (user?.userType || '').toLowerCase();
   const canSave = user?.canSave !== false && userType !== 'guest' && userType !== 'payment/audit';
   const isSiteMaster = userType === 'sitemaster';
+  const primaryLocation = user?.primaryLocationId ?? 0;
+  // Legacy private pages: the location dropdown is disabled for everyone but a
+  // SiteMaster and sits on the user's primary location.
+  const lockLocation = variant.isPrivate && !isSiteMaster;
+  const noLocation = lockLocation && !primaryLocation;
 
   const [rows, setRows] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Option[]>([]);
   // Filters live in the URL so opening a delivery and coming back restores them.
-  const [locationId, setLocationId] = useUrlState('locationId', user?.primaryLocationId ?? 0);
+  const [urlLocationId, setLocationId] = useUrlState('locationId', primaryLocation);
+  const locationId = lockLocation ? primaryLocation : urlLocationId;
   const [search, setSearch] = useUrlState('search', '');
   const [showDeleted, setShowDeleted] = useUrlState('showDeleted', false);
   const [loading, setLoading] = useState(true);
@@ -94,6 +269,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
   }, []);
 
   function load() {
+    if (noLocation) { setRows([]); setLoading(false); return; }
     setLoading(true);
     setError('');
     const q = new URLSearchParams();
@@ -127,6 +303,24 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
     }
   }
 
+  // Legacy BtnPrint: the receipt opens in its own page and goes to the printer.
+  // The tab is opened synchronously (inside the click) so pop-up blockers let
+  // it through, then filled once the delivery has loaded.
+  function printDelivery(id: number) {
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Allow pop-ups for this site to print a delivery.'); return; }
+    w.document.write('<p style="font-family:sans-serif">Preparing the receipt…</p>');
+    apiRequest<{ header: Row; lines: Row[] }>(`/api/portal/finance/${variant.base}/${id}`)
+      .then((d) => {
+        w.document.open();
+        w.document.write(buildPrintHtml(d.header, d.lines));
+        w.document.close();
+        w.focus();
+        setTimeout(() => w.print(), 150);
+      })
+      .catch(() => { w.document.body.innerHTML = '<p style="font-family:sans-serif">Could not load the delivery.</p>'; });
+  }
+
   // Group deliveries can be narrowed by semester (client-side, from loaded rows).
   const semesters = useMemo(
     () => Array.from(new Set(rows.map((r) => str(r, 'SemesterName')).filter(Boolean))).sort(),
@@ -136,6 +330,9 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
     () => (variant.hasSemester && semFilter ? rows.filter((r) => str(r, 'SemesterName') === semFilter) : rows),
     [rows, semFilter, variant.hasSemester],
   );
+  const grid = useGrid(displayRows, variant.pageSize);
+  // Legacy footer sums the whole result, not the visible page.
+  const amountTotal = useMemo(() => displayRows.reduce((s, r) => s + num(r, variant.amountKey), 0), [displayRows, variant.amountKey]);
 
   function exportCsv() {
     const cols: [string, (r: Row) => string][] = [
@@ -147,11 +344,11 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
         ['Expenses', (r: Row) => String(num(r, 'PaymentDeliveryTotalExpenses'))] as [string, (r: Row) => string],
       ] : []),
       [variant.hasSemester ? 'Net' : 'Amount', (r) => String(num(r, variant.amountKey))],
-      ['Received', (r) => dmy(r[variant.recDateKey])],
-      ['Closed', (r) => (r[variant.closedKey] === true ? 'Yes' : 'No')],
+      ['Received', (r) => dmy(pick(r, variant.recDateKey))],
+      ['Closed', (r) => (flag(r, variant.closedKey) ? 'Yes' : 'No')],
     ];
     const header = cols.map((c) => c[0]).join(',');
-    const lines = displayRows.map((r) => cols.map((c) => `"${c[1](r).replace(/"/g, '""')}"`).join(','));
+    const lines = grid.sorted.map((r) => cols.map((c) => `"${c[1](r).replace(/"/g, '""')}"`).join(','));
     const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -161,6 +358,8 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
   }
 
   const inputCls = 'rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
+  const showActions = isSiteMaster || variant.isPrivate;
+  const colCount = 10;
 
   return (
     <div className="p-6 md:p-8">
@@ -171,8 +370,12 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
         <input value={search} onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && load()}
           placeholder="Search…" className={`${inputCls} w-44`} />
-        <select value={locationId} onChange={(e) => setLocationId(Number(e.target.value))} className={inputCls}>
-          <option value={0}>All locations</option>
+        <select value={locationId} disabled={lockLocation}
+          onChange={(e) => setLocationId(Number(e.target.value))}
+          className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
+          title={lockLocation ? 'Only a SiteMaster can change the location' : undefined}>
+          {(!variant.isPrivate || isSiteMaster) && <option value={0}>All locations</option>}
+          {noLocation && <option value={0}>No location assigned</option>}
           {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </select>
         {variant.hasSemester && semesters.length > 0 && (
@@ -195,7 +398,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
           </button>
         )}
         <div className="flex-1" />
-        {canSave && (
+        {canSave && !noLocation && (
           <button onClick={() => setCreating(true)}
             className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-1.5">
             <Plus className="size-4" /> New Delivery
@@ -203,11 +406,24 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
         )}
       </div>
 
+      {noLocation && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
+          <AlertCircle className="size-4 text-amber-500 shrink-0" />
+          <p className="text-sm text-amber-700">
+            Your account has no primary location, so private deliveries cannot be listed or created. Ask a SiteMaster to assign one.
+          </p>
+        </div>
+      )}
+
       {error && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
           <AlertCircle className="size-4 text-red-500 shrink-0" />
           <p className="text-sm text-red-600">{error}</p>
         </div>
+      )}
+
+      {variant.isPrivate && !loading && !noLocation && (
+        <p className="text-sm font-semibold text-[#1e5c97] mb-2">{displayRows.length.toLocaleString()} Private Payments</p>
       )}
 
       {loading ? (
@@ -218,63 +434,87 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
             <thead>
               <tr>
                 <th className="!px-2" />
-                <th className="text-left">Location</th>
-                {variant.hasSemester && <th className="text-left">Semester</th>}
-                <th className="text-left">S/N</th>
-                {variant.hasSemester && <th className="text-right">Payments</th>}
-                {variant.hasSemester && <th className="text-right">Expenses</th>}
-                <th className="text-right">{variant.hasSemester ? 'Net' : 'Amount'}</th>
-                <th className="text-left">Received</th>
-                <th className="text-center">Closed</th>
-                {isSiteMaster && <th />}
+                <SortHeader label="Location" k="LocationNickName" grid={grid} />
+                {variant.hasSemester && <SortHeader label="Semester" k="SemesterName" grid={grid} />}
+                <SortHeader label="S/N" k={variant.serialKey} grid={grid} />
+                {variant.hasSemester && <SortHeader label="Payments" k="PaymentDeliveryTotalPayments" grid={grid} align="right" />}
+                {variant.hasSemester && <SortHeader label="Expenses" k="PaymentDeliveryTotalExpenses" grid={grid} align="right" />}
+                <SortHeader label={variant.hasSemester ? 'Net' : 'Amount'} k={variant.amountKey} grid={grid} align="right" />
+                <SortHeader label="Received" k={variant.recDateKey} grid={grid} />
+                <SortHeader label="Closed" k={variant.closedKey} grid={grid} align="center" />
+                {showActions && <th />}
               </tr>
             </thead>
             <tbody>
-              {displayRows.length === 0 && (
-                <tr><td colSpan={10} className="text-center text-slate-400 py-6">No deliveries found.</td></tr>
+              {grid.pageRows.length === 0 && (
+                <tr><td colSpan={colCount} className="text-center text-slate-400 py-6">No deliveries found.</td></tr>
               )}
-              {displayRows.map((r) => {
+              {grid.pageRows.map((r) => {
                 const id = num(r, variant.idKey);
-                const closed = r[variant.closedKey] === true;
+                const closed = flag(r, variant.closedKey);
                 return (
-                  <>
-                    <tr key={id} onClick={() => toggleDetail(id)} className="cursor-pointer hover:bg-slate-50">
+                  <Fragment key={id}>
+                    <tr onClick={() => toggleDetail(id)} className="cursor-pointer hover:bg-slate-50">
                       <td className="w-6 !px-2">{openId === id ? <ChevronDown className="size-4 text-slate-400" /> : <ChevronRight className="size-4 text-slate-400" />}</td>
                       <td>{str(r, 'LocationNickName') || '-'}</td>
                       {variant.hasSemester && <td>{str(r, 'SemesterName') || '-'}</td>}
                       <td className="font-semibold">{str(r, variant.serialKey)}</td>
-                      {variant.hasSemester && <td className="text-right text-emerald-700 tabular-nums">{money(r['PaymentDeliveryTotalPayments'])}</td>}
-                      {variant.hasSemester && <td className="text-right text-red-600 tabular-nums">{money(r['PaymentDeliveryTotalExpenses'])}</td>}
-                      <td className="text-right font-bold tabular-nums">{money(r[variant.amountKey])}</td>
-                      <td>{dmy(r[variant.recDateKey])}</td>
+                      {variant.hasSemester && <td className="text-right text-emerald-700 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalPayments'))}</td>}
+                      {variant.hasSemester && <td className="text-right text-red-600 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalExpenses'))}</td>}
+                      <td className="text-right font-bold tabular-nums">{money(pick(r, variant.amountKey))}</td>
+                      <td>{dmy(pick(r, variant.recDateKey))}</td>
                       <td className="text-center">{closed ? <span className="text-emerald-700 font-bold">Yes</span> : ''}</td>
-                      {isSiteMaster && (
+                      {showActions && (
                         <td onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => setClosed(id, !closed)}
-                            title={closed ? 'Reopen' : 'Close'}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
-                            {closed ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />}
-                            {closed ? 'Reopen' : 'Close'}
-                          </button>
+                          <div className="flex items-center gap-3">
+                            {variant.isPrivate && (
+                              <button onClick={() => printDelivery(id)} title="Print receipt"
+                                className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
+                                <Printer className="size-3.5" /> Print
+                              </button>
+                            )}
+                            {isSiteMaster && (
+                              <button onClick={() => setClosed(id, !closed)}
+                                title={closed ? 'Reopen' : 'Close'}
+                                className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
+                                {closed ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />}
+                                {closed ? 'Reopen' : 'Close'}
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
                     {openId === id && (
-                      <tr key={`${id}-detail`}>
-                        <td colSpan={10} className="bg-slate-50 p-3">
+                      <tr>
+                        <td colSpan={colCount} className="bg-slate-50 p-3">
                           {!detail ? (
                             <span className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="size-4 animate-spin" /> Loading lines…</span>
                           ) : (
-                            <DeliveryLines lines={detail.lines} variant={variant} />
+                            <>
+                              {variant.isPrivate && <PrivateHeader header={detail.header} lines={detail.lines} />}
+                              <DeliveryLines lines={detail.lines} variant={variant} />
+                            </>
                           )}
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
+            {variant.isPrivate && isSiteMaster && displayRows.length > 0 && (
+              <tfoot>
+                <tr className="bg-slate-50 font-bold">
+                  <td />
+                  <td colSpan={2} className="text-slate-500 text-sm">Total</td>
+                  <td className="text-center tabular-nums">{money0(amountTotal)}</td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            )}
           </table>
+          <Pager grid={grid} total={displayRows.length} />
         </div>
       )}
 
@@ -282,10 +522,35 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
         <CreateDelivery
           variant={variant}
           locations={locations}
-          initialLocation={locationId || (user?.primaryLocationId ?? 0)}
+          initialLocation={locationId || primaryLocation}
+          lockLocation={lockLocation}
+          isSiteMaster={isSiteMaster}
           onClose={(saved) => { setCreating(false); if (saved) load(); }}
         />
       )}
+    </div>
+  );
+}
+
+const Field = ({ label, value }: { label: string; value: string }) => (
+  <div><span className="text-slate-400">{label}: </span><span className="font-semibold text-slate-700">{value}</span></div>
+);
+
+// Legacy edit popup header: the stored delivery fields plus the split label.
+function PrivateHeader({ header, lines }: { header: Row; lines: Row[] }) {
+  const h = header;
+  return (
+    <div className="mb-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-xs mb-2">
+        <Field label="Generated On" value={dmy(pick(h, 'PrivatePaymentDeliveryGenerationDate'))} />
+        <Field label="Received On" value={dmy(pick(h, 'PrivatePaymentDeliveryRecievedDate'))} />
+        <Field label="Total Payments" value={money2(num(h, 'PrivatePaymentDeliveryTotalPayments'))} />
+        <Field label="Amount" value={money2(num(h, 'PrivatePaymentDeliveryAmount'))} />
+        <Field label="Deleted" value={flag(h, 'PrivatePaymentDeliveryDeleted') ? 'Yes' : 'No'} />
+        <Field label="Closed" value={flag(h, 'PrivatePaymentDeliveryClosed') ? 'Yes' : 'No'} />
+        <div className="col-span-2"><Field label="Remarks" value={str(h, 'PrivatePaymentDeliveryRemarks') || '-'} /></div>
+      </div>
+      <p className="text-xs font-bold text-slate-700">{currencySplit(lines)}</p>
     </div>
   );
 }
@@ -302,26 +567,32 @@ function DeliveryLines({ lines, variant }: { lines: Row[]; variant: Variant }) {
         </tr>
       </thead>
       <tbody>
-        {lines.map((l, i) => (
-          <tr key={i} className={String(l.Mode).toLowerCase() === 'expense' ? 'text-red-700' : ''}>
-            <td className="py-0.5">{str(l, 'Mode')}</td>
-            <td>{str(l, 'Type')}</td>
-            <td>{dmy(l.PEDate)}</td>
-            <td className="text-right">{money(l.Amount)}</td>
-            <td className="text-right">{money(l.PaidAmount)}</td>
-            <td>{str(l, 'Currency')}</td>
-            <td>{str(l, variant.issuedToKey) || str(l, 'PaymentIssuedTo')}</td>
-          </tr>
-        ))}
+        {lines.map((l, i) => {
+          const isExpense = str(l, 'Mode').toLowerCase() === 'expense';
+          const cls = isExpense ? 'text-red-700' : variant.isPrivate ? typeRowClass(l) : '';
+          return (
+            <tr key={i} className={cls}>
+              <td className="py-0.5 px-1">{str(l, 'Mode')}</td>
+              <td className="px-1">{str(l, 'Type')}</td>
+              <td className="px-1">{dmy(pick(l, 'PEDate'))}</td>
+              <td className="text-right px-1">{money(pick(l, 'Amount'))}</td>
+              <td className="text-right px-1">{money(pick(l, 'PaidAmount'))}</td>
+              <td className="px-1">{str(l, 'Currency')}</td>
+              <td className="px-1">{str(l, variant.issuedToKey) || str(l, 'PaymentIssuedTo')}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
 }
 
-function CreateDelivery({ variant, locations, initialLocation, onClose }: {
+function CreateDelivery({ variant, locations, initialLocation, lockLocation, isSiteMaster, onClose }: {
   variant: Variant;
   locations: Option[];
   initialLocation: number;
+  lockLocation: boolean;
+  isSiteMaster: boolean;
   onClose: (saved: boolean) => void;
 }) {
   const [locationId, setLocationId] = useState(initialLocation);
@@ -331,7 +602,10 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
   const [semesterName, setSemesterName] = useState('');
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [remarks, setRemarks] = useState('');
-  const [receivedDate, setReceivedDate] = useState('');
+  // Legacy defaults both dates to today; both stay editable.
+  const [receivedDate, setReceivedDate] = useState(variant.isPrivate ? todayIso() : '');
+  const [generatedDate, setGeneratedDate] = useState(todayIso());
+  const [closed, setClosed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -347,39 +621,41 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
         setSerial(r.serial);
         setSemesterId(r.semesterId ?? 0);
         setSemesterName(r.semesterName ?? '');
-        setChecked(new Set(r.lines.map((l) => num(l, 'IndividualID'))));
+        setChecked(new Set(r.lines.map((l) => lineId(l, variant))));
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load undelivered lines.'));
-  }, [locationId, variant.base]);
+  }, [locationId, variant]);
+
+  const checkedLines = useMemo(
+    () => (candidates ?? []).filter((l) => checked.has(lineId(l, variant))),
+    [candidates, checked, variant],
+  );
 
   const totals = useMemo(() => {
     let payments = 0, expenses = 0;
-    for (const l of candidates ?? []) {
-      if (!checked.has(num(l, 'IndividualID'))) continue;
-      if (String(l.Mode).toLowerCase() === 'expense') expenses += num(l, 'Amount');
+    for (const l of checkedLines) {
+      if (str(l, 'Mode').toLowerCase() === 'expense') expenses += num(l, 'Amount');
       else payments += num(l, 'Amount');
     }
     return { payments, expenses, net: payments - expenses };
-  }, [candidates, checked]);
+  }, [checkedLines]);
 
   async function save() {
     if (checked.size === 0) { setError('Select at least one line.'); return; }
     if (variant.hasSemester && !semesterId) { setError('No current semester found for this location.'); return; }
     setSaving(true);
     setError('');
-    const lines = (candidates ?? [])
-      .filter((l) => checked.has(num(l, 'IndividualID')))
-      .map((l) => ({ individualId: num(l, 'IndividualID'), mode: str(l, 'Mode') }));
+    const lines = checkedLines.map((l) => ({ individualId: lineId(l, variant), mode: str(l, 'Mode') }));
     const body: Record<string, unknown> = {
       locationId,
       serialNumber: serial,
-      generationDate: new Date().toISOString(),
-      receivedDate: receivedDate ? new Date(receivedDate).toISOString() : new Date().toISOString(),
       remarks,
       lines,
     };
     if (variant.hasSemester) {
       Object.assign(body, {
+        generationDate: new Date().toISOString(),
+        receivedDate: receivedDate ? new Date(receivedDate).toISOString() : new Date().toISOString(),
         semesterId,
         amount: totals.net,
         totalPayments: totals.payments,
@@ -387,7 +663,15 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
         totalDifference: totals.net,
       });
     } else {
-      Object.assign(body, { amount: totals.payments, totalPayments: totals.payments, closed: false });
+      // Plain yyyy-mm-dd so the API stores the calendar day the user picked
+      // (no timezone shift); the API maps each date onto its own column.
+      Object.assign(body, {
+        generationDate: generatedDate || todayIso(),
+        receivedDate: receivedDate || todayIso(),
+        amount: totals.payments,
+        totalPayments: totals.payments,
+        closed: isSiteMaster && closed,
+      });
     }
     try {
       await apiRequest(`/api/portal/finance/${variant.base}`, { method: 'POST', body: JSON.stringify(body) });
@@ -413,8 +697,11 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">Location</label>
-            <select value={locationId} onChange={(e) => setLocationId(Number(e.target.value))} className={`${inputCls} w-full`}>
-              <option value={0}>Choose…</option>
+            <select value={locationId} disabled={lockLocation}
+              onChange={(e) => setLocationId(Number(e.target.value))}
+              className={`${inputCls} w-full disabled:bg-slate-50 disabled:text-slate-500`}
+              title={lockLocation ? 'Only a SiteMaster can change the location' : undefined}>
+              {(!variant.isPrivate || locationId === 0) && <option value={0}>Choose…</option>}
               {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
             </select>
           </div>
@@ -428,10 +715,22 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
               <input value={semesterName || '-'} readOnly className={`${inputCls} w-full bg-slate-50`} />
             </div>
           )}
+          {variant.isPrivate && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Generated On</label>
+              <DateInput value={generatedDate} onChange={(e) => setGeneratedDate(e.target.value)} className={`${inputCls} w-full`} />
+            </div>
+          )}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">Received Date</label>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">{variant.isPrivate ? 'Received On' : 'Received Date'}</label>
             <DateInput value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} className={`${inputCls} w-full`} />
           </div>
+          {variant.isPrivate && isSiteMaster && (
+            <label className="flex items-center gap-1.5 text-sm text-slate-600 select-none self-end pb-1.5">
+              <input type="checkbox" checked={closed} onChange={(e) => setClosed(e.target.checked)} className="accent-[#1e5c97]" />
+              Closed
+            </label>
+          )}
         </div>
 
         {error && (
@@ -456,20 +755,23 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
                     <input type="checkbox"
                       checked={checked.size === candidates.length}
                       onChange={(e) => setChecked(e.target.checked
-                        ? new Set(candidates.map((l) => num(l, 'IndividualID')))
+                        ? new Set(candidates.map((l) => lineId(l, variant)))
                         : new Set())}
                       className="accent-[#1e5c97]" />
                   </th>
                   <th className="text-left">Mode</th><th className="text-left">Type</th><th className="text-left">Date</th>
-                  <th className="text-right">Amount</th><th className="text-left">Curr</th><th className="text-left">Issued To</th>
+                  <th className="text-right">Amount</th>
+                  {variant.isPrivate && <th className="text-right">Paid</th>}
+                  <th className="text-left px-1">Curr</th><th className="text-left">Issued To</th>
                 </tr>
               </thead>
               <tbody>
                 {candidates.map((l) => {
-                  const id = num(l, 'IndividualID');
-                  const isExpense = String(l.Mode).toLowerCase() === 'expense';
+                  const id = lineId(l, variant);
+                  const isExpense = str(l, 'Mode').toLowerCase() === 'expense';
+                  const cls = isExpense ? 'text-red-700' : variant.isPrivate ? typeRowClass(l) : '';
                   return (
-                    <tr key={id} className={isExpense ? 'text-red-700' : ''}>
+                    <tr key={id} className={cls}>
                       <td className="p-1.5 text-center">
                         <input type="checkbox" checked={checked.has(id)}
                           onChange={(e) => setChecked((prev) => {
@@ -481,9 +783,10 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
                       </td>
                       <td>{str(l, 'Mode')}</td>
                       <td>{str(l, 'Type')}</td>
-                      <td>{dmy(l.PEDate)}</td>
-                      <td className="text-right">{money(l.Amount)}</td>
-                      <td>{str(l, 'Currency')}</td>
+                      <td>{dmy(pick(l, 'PEDate'))}</td>
+                      <td className="text-right">{money(pick(l, 'Amount'))}</td>
+                      {variant.isPrivate && <td className="text-right">{money2(num(l, 'PaidAmount'))}</td>}
+                      <td className="px-1">{str(l, 'Currency')}</td>
                       <td>{str(l, variant.issuedToKey) || str(l, 'PaymentIssuedTo')}</td>
                     </tr>
                   );
@@ -499,6 +802,9 @@ function CreateDelivery({ variant, locations, initialLocation, onClose }: {
           <span className="font-extrabold text-slate-900">
             {variant.hasSemester ? 'Net to deliver' : 'Total'}: {(variant.hasSemester ? totals.net : totals.payments).toLocaleString()}
           </span>
+          {variant.isPrivate && candidates && candidates.length > 0 && (
+            <span className="font-bold text-slate-700">{currencySplit(checkedLines)}</span>
+          )}
         </div>
 
         <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2}

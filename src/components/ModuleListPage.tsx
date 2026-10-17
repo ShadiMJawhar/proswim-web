@@ -21,6 +21,14 @@ export interface ColumnDef {
   format?: 'date' | 'money' | 'bool' | 'text';
   extra?: boolean;           // only visible with "More columns"
   total?: boolean;           // sum this column into a footer totals row
+  /** Key of a ModuleConfig.columnGroups entry: the column is hidden until that
+   *  group's checkbox is ticked (a second, named "More columns" set). */
+  group?: string;
+  /** Sum this column per distinct value of another column, e.g.
+   *  totalBy: 'PackageCurrency' renders "LBP 1,200 / USD 300" in the footer. */
+  totalBy?: string;
+  /** Only these user types (lower-case) see this column's total. */
+  totalRoles?: string[];
 }
 
 export interface FilterOption { value: string | number; label: string }
@@ -28,11 +36,14 @@ export interface FilterOption { value: string | number; label: string }
 export interface FilterDef {
   param: string;             // query-string parameter name
   label: string;
-  type: 'text' | 'select' | 'checkbox' | 'date';
+  /** multiselect = checkbox dropdown with Check all; value is a "1,3" comma list. */
+  type: 'text' | 'select' | 'checkbox' | 'date' | 'multiselect';
   options?: FilterOption[];  // static options
   optionsKey?: string;       // key into the lookups map
   initial?: string | number | boolean;
   width?: string;
+  /** Only these user types (lower-case) see (and send) this filter. */
+  roles?: string[];
   /** false = shown and drives the cascade, but never sent to the API. Needed
    *  where the endpoint has no such parameter (registrations, sessions): there
    *  location scopes the semester list, and the semester scopes the rows. */
@@ -40,6 +51,9 @@ export interface FilterDef {
   /** When true, changing this filter reloads the grid immediately — no Search
    *  click needed (e.g. the Location select on the payroll pages). */
   autoSubmit?: boolean;
+  /** User types (case-insensitive) for which the filter is shown but locked to
+   *  its initial value, e.g. ['user'] for the legacy ddlLocations.Enabled=false. */
+  lockedFor?: string[];
 }
 
 export interface ModuleConfig {
@@ -55,9 +69,82 @@ export interface ModuleConfig {
   rowClass?: (row: Row) => string;
   /** Base route for add/edit forms (e.g. "/semesters"). Enables Add New + row Edit. */
   editBase?: string;
+  /** Filter params forwarded to the Add New form as query params (e.g.
+   *  ['locationId'] so the new record defaults to the selected location). */
+  newLinkParams?: string[];
+  /** Named optional column sets, each with its own checkbox in the filter bar
+   *  (e.g. the legacy "Feedback" columns). `roles` limits who sees the toggle. */
+  columnGroups?: { key: string; label: string; roles?: string[] }[];
 }
 
 const PAGE_SIZE = 50;
+
+/** Footer cell for a `totalBy` column: one sum per distinct group value,
+ *  e.g. "LBP 1,200 / USD 300" (groups sorted so the output is stable). */
+function totalsBy(rows: Row[], col: ColumnDef): string {
+  const sums = new Map<string, number>();
+  for (const r of rows) {
+    const g = String(r[col.totalBy!] ?? '');
+    sums.set(g, (sums.get(g) ?? 0) + (Number(r[col.key]) || 0));
+  }
+  return [...sums.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([g, v]) => `${g} ${v.toLocaleString()}`.trim())
+    .join(' / ');
+}
+
+/** Checkbox-dropdown filter (legacy RadComboBox CheckBoxes + Check All). */
+function MultiSelect({ label, options, value, width, onChange }: {
+  label: string; options: FilterOption[]; value: string; width?: string;
+  onChange: (next: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const picked = new Set(value.split(',').map((s) => s.trim()).filter(Boolean));
+  const all = options.length > 0 && options.every((o) => picked.has(String(o.value)));
+  const summary = picked.size === 0 ? `${label}: All`
+    : picked.size === 1 ? options.find((o) => picked.has(String(o.value)))?.label ?? `${label}: 1`
+    : `${label}: ${picked.size}`;
+  const toggle = (v: string) => {
+    const next = new Set(picked);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChange(options.filter((o) => next.has(String(o.value))).map((o) => String(o.value)).join(','));
+  };
+  return (
+    <div
+      className="relative"
+      tabIndex={-1}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={`${width || 'w-40'} rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 text-left truncate focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40`}
+        title={summary}
+      >
+        {summary}
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 min-w-44 max-h-64 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg p-2 text-xs">
+          <label className="flex items-center gap-2 px-1 py-1 font-semibold text-slate-700 border-b border-slate-100 mb-1 select-none">
+            <input
+              type="checkbox"
+              checked={all}
+              onChange={(e) => onChange(e.target.checked ? options.map((o) => String(o.value)).join(',') : '')}
+              className="accent-[#1e5c97]"
+            />
+            Check all
+          </label>
+          {options.map((o) => (
+            <label key={String(o.value)} className="flex items-center gap-2 px-1 py-1 text-slate-600 hover:bg-slate-50 rounded select-none">
+              <input type="checkbox" checked={picked.has(String(o.value))} onChange={() => toggle(String(o.value))} className="accent-[#1e5c97]" />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Location filters open scoped to the signed-in user's own location rather than
 // to "all locations". Still editable, an explicit `initial` in the config wins.
@@ -107,6 +194,9 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const access = useAccess();
   const canEdit = !!config.editBase && config.idKey && user?.userType?.toLowerCase() !== 'guest'
     && user?.canSave !== false && access.canEdit(config.editBase);
+  // Role gating for filters / column groups / totals (userType, lower-case).
+  const userRole = (user?.userType ?? '').toLowerCase();
+  const roleOk = (roles?: string[]) => !roles || roles.includes(userRole);
   const [rows, setRows] = useState<Row[]>([]);
   const [lookups, setLookups] = useState<Record<string, FilterOption[]>>({});
   const [values, setValues] = useState<Record<string, string | number | boolean>>(() => {
@@ -124,7 +214,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         continue;
       }
       if (f.initial === undefined && LOCATION_PARAMS.has(f.param) && user?.primaryLocationId) {
-        v[f.param] = user.primaryLocationId;
+        v[f.param] = f.type === 'multiselect' ? String(user.primaryLocationId) : user.primaryLocationId;
         continue;
       }
       v[f.param] = f.initial ?? (f.type === 'checkbox' ? false : f.type === 'select' ? 0 : '');
@@ -136,6 +226,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const [sortKey, setSortKey] = useState('');
   const [sortAsc, setSortAsc] = useState(true);
   const [moreCols, setMoreCols] = useState(false);
+  const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({});
   const [page, setPage] = useState(0);
 
   useEffect(() => {
@@ -187,7 +278,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   function buildQuery(v: Record<string, string | number | boolean>): string {
     const q = new URLSearchParams();
     for (const f of config.filters) {
-      if (f.submit === false) continue;
+      if (f.submit === false || !roleOk(f.roles)) continue;
       const val = v[f.param];
       if (val === '' || val === false || val == null) continue;
       if (f.type === 'select' && Number(val) === 0 && typeof val === 'number') continue;
@@ -236,9 +327,12 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
     return arr;
   }, [rows, sortKey, sortAsc]);
 
-  const cols = config.columns.filter((c) => !c.extra || moreCols);
+  const groups = (config.columnGroups ?? []).filter((g) => roleOk(g.roles));
+  const groupVisible = (key?: string) => !key || (groups.some((g) => g.key === key) && !!groupsOn[key]);
+  const cols = config.columns.filter((c) => (!c.extra || moreCols) && groupVisible(c.group));
   const hasExtra = config.columns.some((c) => c.extra);
-  const hasTotals = cols.some((c) => c.total);
+  const showTotal = (c: ColumnDef) => (c.total || !!c.totalBy) && roleOk(c.totalRoles);
+  const hasTotals = cols.some(showTotal);
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const pageRows = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -277,7 +371,15 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
           <div className="flex items-center gap-2">
             {canEdit && (
               <button
-                onClick={() => navigate(`${config.editBase}/new`)}
+                onClick={() => {
+                  const q = new URLSearchParams();
+                  for (const p of config.newLinkParams ?? []) {
+                    const v = values[p];
+                    if (v === '' || v == null || v === false || v === 0) continue;
+                    q.set(p, String(v));
+                  }
+                  navigate(`${config.editBase}/new${q.toString() ? `?${q}` : ''}`);
+                }}
                 className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5"
               >
                 <Plus className="size-3.5" /> Add New
@@ -299,7 +401,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         onSubmit={(e) => { e.preventDefault(); load(); }}
         className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-2"
       >
-        {config.filters.map((f) => {
+        {config.filters.filter((f) => roleOk(f.roles)).map((f) => {
           const val = values[f.param];
           const set = (nv: string | number | boolean) => {
             const next = { ...values, [f.param]: nv };
@@ -307,7 +409,19 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             // Opt-in filters (e.g. Location on payroll) apply on change, no Search click.
             if (f.autoSubmit) load(next);
           };
+          const locked = !!f.lockedFor?.some((t) => t.toLowerCase() === (user?.userType || '').toLowerCase());
           switch (f.type) {
+            case 'multiselect':
+              return (
+                <MultiSelect
+                  key={f.param}
+                  label={f.label}
+                  width={f.width}
+                  options={f.options ?? lookups[f.optionsKey || ''] ?? []}
+                  value={String(val ?? '')}
+                  onChange={set}
+                />
+              );
             case 'text':
               return (
                 <div key={f.param} className="relative">
@@ -315,6 +429,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                   <input
                     value={String(val ?? '')}
                     onChange={(e) => set(e.target.value)}
+                    disabled={locked}
                     placeholder={f.label}
                     className={`${f.width || 'w-48'} rounded-lg border border-slate-200 pl-8 pr-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40`}
                   />
@@ -324,13 +439,13 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
               return (
                 <label key={f.param} className="flex items-center gap-1 text-xs text-slate-500">
                   {f.label}
-                  <DateInput value={String(val ?? '')} onChange={(e) => set(e.target.value)} className={selectCls} />
+                  <DateInput value={String(val ?? '')} onChange={(e) => set(e.target.value)} disabled={locked} className={selectCls} />
                 </label>
               );
             case 'checkbox':
               return (
                 <label key={f.param} className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-                  <input type="checkbox" checked={val === true} onChange={(e) => set(e.target.checked)} className="accent-[#1e5c97]" />
+                  <input type="checkbox" checked={val === true} onChange={(e) => set(e.target.checked)} disabled={locked} className="accent-[#1e5c97]" />
                   {f.label}
                 </label>
               );
@@ -346,7 +461,8 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                     const raw = e.target.value;
                     set(typeof (opts[0]?.value) === 'number' ? Number(raw) : raw);
                   }}
-                  className={`${selectCls} ${f.width || ''}`}
+                  disabled={locked}
+                  className={`${selectCls} ${f.width || ''} disabled:bg-slate-50 disabled:text-slate-400`}
                 >
                   <option value={typeof (opts[0]?.value) === 'number' ? 0 : ''}>{f.label}</option>
                   {opts.map((o) => (
@@ -363,6 +479,17 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             More columns
           </label>
         )}
+        {groups.map((g) => (
+          <label key={g.key} className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
+            <input
+              type="checkbox"
+              checked={!!groupsOn[g.key]}
+              onChange={(e) => setGroupsOn((cur) => ({ ...cur, [g.key]: e.target.checked }))}
+              className="accent-[#1e5c97]"
+            />
+            {g.label}
+          </label>
+        ))}
         <button type="submit" className="btn-grad ml-auto rounded-lg text-xs font-semibold px-4 py-1.5">
           Search
         </button>
@@ -437,10 +564,12 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                 <tfoot>
                   <tr className="border-t-2 border-slate-200 font-bold text-slate-700 bg-slate-50/60">
                     {cols.map((c, idx) => (
-                      <td key={c.key + c.label} className="px-3 py-2.5">
-                        {c.total
-                          ? Number(sorted.reduce((s, r) => s + (Number(r[c.key]) || 0), 0)).toLocaleString()
-                          : idx === 0 ? 'Total' : ''}
+                      <td key={c.key + c.label} className="px-3 py-2.5 whitespace-nowrap">
+                        {!showTotal(c)
+                          ? (idx === 0 ? 'Total' : '')
+                          : c.totalBy
+                            ? totalsBy(sorted, c)
+                            : Number(sorted.reduce((s, r) => s + (Number(r[c.key]) || 0), 0)).toLocaleString()}
                       </td>
                     ))}
                     {canEdit && <td />}

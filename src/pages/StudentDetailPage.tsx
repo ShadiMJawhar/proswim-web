@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useRef } from 'react';
-import { Loader2, AlertCircle, Save, Pencil, X, HeartPulse, PhoneCall, Trophy, Camera, Users, UserPlus, ListChecks } from 'lucide-react';
+import {
+  Loader2, AlertCircle, Save, Pencil, X, HeartPulse, PhoneCall, Trophy, Camera, Users, UserPlus, ListChecks,
+  Copy, ExternalLink, Plus, Layers, MessageSquare,
+} from 'lucide-react';
 import { toast } from '../components/Toast';
 import { apiRequest, apiUpload, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
@@ -16,7 +19,26 @@ interface Lookups {
   bloodTypes: { bloodTypeId: number; bloodTypeName: string | null }[];
   locations: { locationId: number; locationNickName: string | null }[];
   coaches: { coachId: number; coachFullName: string | null; locationNickName: string | null }[];
+  levels?: { levelId: number; levelName: string | null }[];
 }
+
+// Text fields that had a jQuery autocomplete on StudentsIndividual.aspx →
+// key in /api/portal/students/autocomplete.
+const DATALIST_FOR: Record<string, string> = {
+  StudentFirstName: 'firstNames',
+  StudentMiddleName: 'firstNames',
+  StudentLastName: 'lastNames',
+  StudentSchool: 'schools',
+  StudentAddressCity: 'cities',
+  StudentAddressRegion: 'regions',
+  StudentAddressStreet: 'streets',
+  StudentNationality1: 'nationalities',
+  StudentNationality2: 'nationalities',
+  StudentMomOccupation: 'occupations',
+  StudentDadOccupation: 'occupations',
+  StudentStartingCoach: 'startingCoaches',
+  StudentStartingLocation: 'startingLocations',
+};
 
 type FieldType = 'text' | 'date' | 'checkbox' | 'textarea' | 'gender' | 'bloodType' | 'location' | 'coach';
 
@@ -149,6 +171,7 @@ export function StudentDetailPage() {
   const canSave = user?.canSave !== false;
   const editing = searchParams.get('edit') === '1' && canSave;
 
+  const navigate = useNavigate();
   const [row, setRow] = useState<StudentRow | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [lookups, setLookups] = useState<Lookups | null>(null);
@@ -156,6 +179,15 @@ export function StudentDetailPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Legacy ChkSendWelcomeEmail: unchecked when editing an existing student.
+  const [sendWelcome, setSendWelcome] = useState(false);
+  // Legacy jQuery autocompletes (distinct first/last names, schools, …), loaded
+  // once edit mode is entered.
+  const [datalists, setDatalists] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    if (!editing || Object.keys(datalists).length) return;
+    apiRequest<Record<string, string[]>>('/api/portal/students/autocomplete').then(setDatalists).catch(() => {});
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function initForm(r: StudentRow) {
     const f: Record<string, unknown> = {};
@@ -190,18 +222,31 @@ export function StudentDetailPage() {
   }
 
   async function save() {
-    setSaving(true);
     setError('');
     setNotice('');
+    // Legacy RequiredFieldValidators (ValidationGroup "Student").
+    const blank = (k: string) => String(form[k] ?? '').trim() === '';
+    const problem =
+      blank('StudentFirstName') ? 'First name is required.'
+      : blank('StudentLastName') ? 'Last name is required.'
+      : blank('StudentPhoneNumber1') ? 'Phone 1 is required.'
+      : blank('StudentDateOfBirth') ? 'Date of birth is required.'
+      : blank('StudentStartingDate') ? 'Starting date is required.'
+      : '';
+    if (problem) { setError(problem); toast.error(problem); return; }
+    setSaving(true);
     try {
       const updated = await apiRequest<StudentRow>(`/api/portal/students/${id}`, {
         method: 'PUT',
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, SendWelcomeEmail: sendWelcome }),
       });
+      const welcome = updated.WelcomeEmailResult ? String(updated.WelcomeEmailResult) : '';
+      delete updated.WelcomeEmailResult;
       setRow(updated);
       initForm(updated);
+      setSendWelcome(false);
       setSearchParams({});
-      setNotice('Saved. Changes are audit-logged per field, same as the legacy tool.');
+      setNotice('Saved. Changes are audit-logged per field, same as the legacy tool.' + (welcome ? ` ${welcome}` : ''));
       toast.success('Student saved.');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Save failed.';
@@ -312,13 +357,22 @@ export function StudentDetailPage() {
             </select>
           </div>
         );
-      default:
+      default: {
+        const dl = DATALIST_FOR[fd.key];
+        const suggestions = dl ? datalists[dl] : undefined;
+        const listId = suggestions?.length ? `dl-student-${fd.key}` : undefined;
         return (
           <div key={fd.key}>
             <label className="block text-xs font-semibold text-slate-500 mb-1">{fd.label}</label>
-            <input value={String(v ?? '')} onChange={(e) => set(fd.key, e.target.value)} className={inputCls} />
+            <input value={String(v ?? '')} onChange={(e) => set(fd.key, e.target.value)} className={inputCls} list={listId} />
+            {listId && (
+              <datalist id={listId}>
+                {suggestions!.map((s) => <option key={s} value={s} />)}
+              </datalist>
+            )}
           </div>
         );
+      }
     }
   }
 
@@ -375,6 +429,17 @@ export function StudentDetailPage() {
               <ListChecks className="size-4" /> Checklist
             </Link>
           )}
+          {!editing && canSave && (
+            // Legacy BtnDuplicate: new student prefilled from this one (minus
+            // first name, DOB, starting date, coach, blood type, facebook, photo).
+            <button
+              onClick={() => navigate(`/students/new?duplicateOf=${id}`)}
+              title="Create a new student prefilled from this one"
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 px-4 py-2 hover:bg-slate-50"
+            >
+              <Copy className="size-4" /> Duplicate
+            </button>
+          )}
           {editing ? (
             <>
               <button
@@ -420,6 +485,14 @@ export function StudentDetailPage() {
           <p className="text-sm text-slate-500 mt-0.5">
             #{String(row.StudentId)} · {String(row.locationNickName ?? '-')} · {String(row.StudentLatestLevelName ?? '-')}
           </p>
+          {/* Legacy HlnkOnlinePRofile */}
+          <a
+            href={`https://www.proswim-lb.com/student.aspx?StudentId=${String(row.StudentId)}`}
+            target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-semibold text-[#1e5c97] hover:underline mt-1"
+          >
+            <ExternalLink className="size-3.5" /> Online ProSwim Profile
+          </a>
         </div>
       </div>
 
@@ -470,8 +543,15 @@ export function StudentDetailPage() {
         ))}
       </div>
 
+      {!editing && <LevelHistory studentId={id!} canSave={canSave} levels={lookups?.levels ?? []} />}
+      {!editing && <BulkHistory studentId={id!} />}
+
       {editing && (
-        <div className="mt-6 flex justify-end gap-2">
+        <div className="mt-6 flex items-center justify-end gap-4">
+          <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
+            <input type="checkbox" checked={sendWelcome} onChange={(e) => setSendWelcome(e.target.checked)} className="accent-[#1e5c97]" />
+            Send Welcome Email
+          </label>
           <button
             onClick={cancelEdit}
             disabled={saving}
@@ -487,6 +567,244 @@ export function StudentDetailPage() {
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             Save changes
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Level history (StudentsIndividual.aspx GVResult + "Add Level") ──────────
+// P_LevelHistory_Select rows; per-row Edit (P_LevelHistory_Update) and an
+// "Add Level" panel (P_LevelHistory_Insert): level, date from, date to
+// (optional), remarks.
+
+type LevelRow = Record<string, unknown>;
+type LevelDraft = { LevelId: number; LevelDateFrom: string; LevelDateTo: string; LevelRemarks: string };
+
+function toIsoDate(v: unknown): string {
+  if (!v || typeof v !== 'string') return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function LevelHistory({ studentId, canSave, levels }: {
+  studentId: string; canSave: boolean; levels: { levelId: number; levelName: string | null }[];
+}) {
+  const [rows, setRows] = useState<LevelRow[] | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const empty: LevelDraft = { LevelId: 0, LevelDateFrom: new Date().toISOString().slice(0, 10), LevelDateTo: '', LevelRemarks: '' };
+  const [draft, setDraft] = useState<LevelDraft>(empty);
+
+  const load = () => {
+    apiRequest<LevelRow[]>(`/api/portal/students/${studentId}/level-history`).then(setRows)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load level history.'));
+  };
+  useEffect(load, [studentId]);
+
+  const lvId = (r: LevelRow) => Number(r.LevelHistoryId ?? 0);
+
+  function startAdd() { setEditingId(null); setDraft(empty); setAdding(true); }
+  function startEdit(r: LevelRow) {
+    setAdding(false);
+    setEditingId(lvId(r));
+    setDraft({
+      LevelId: Number(r.LevelId ?? 0),
+      LevelDateFrom: toIsoDate(r.LevelDateFrom),
+      LevelDateTo: toIsoDate(r.LevelDateTo),
+      LevelRemarks: String(r.LevelRemarks ?? ''),
+    });
+  }
+  function cancel() { setAdding(false); setEditingId(null); setDraft(empty); }
+
+  async function submit() {
+    setError('');
+    if (!draft.LevelId) { setError('Choose a level.'); return; }
+    if (!draft.LevelDateFrom) { setError('Date from is required.'); return; }
+    setBusy(true);
+    try {
+      const body = JSON.stringify({ ...draft, LevelDateTo: draft.LevelDateTo || null });
+      if (editingId) {
+        await apiRequest(`/api/portal/students/level-history/${editingId}`, { method: 'PUT', body });
+        toast.success('Level updated.');
+      } else {
+        await apiRequest(`/api/portal/students/${studentId}/level-history`, { method: 'POST', body });
+        toast.success('Level added.');
+      }
+      cancel();
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Could not save the level.';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputCls =
+    'w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
+
+  const editor = (
+    <div className="border border-slate-200 rounded-xl p-3 mb-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-1">Level *</label>
+        <select value={draft.LevelId} onChange={(e) => setDraft({ ...draft, LevelId: Number(e.target.value) })} className={inputCls}>
+          <option value={0}>Not Selected</option>
+          {levels.map((l) => <option key={l.levelId} value={l.levelId}>{l.levelName}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-1">Date from *</label>
+        <DateInput value={draft.LevelDateFrom} onChange={(e) => setDraft({ ...draft, LevelDateFrom: e.target.value })} className={inputCls} />
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-1">Date to</label>
+        <DateInput value={draft.LevelDateTo} onChange={(e) => setDraft({ ...draft, LevelDateTo: e.target.value })} className={inputCls} />
+      </div>
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 mb-1">Remarks</label>
+        <input value={draft.LevelRemarks} onChange={(e) => setDraft({ ...draft, LevelRemarks: e.target.value })} className={inputCls} />
+      </div>
+      <div className="md:col-span-4 flex justify-end gap-2">
+        <button onClick={cancel} disabled={busy}
+          className="rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50">
+          Cancel
+        </button>
+        <button onClick={submit} disabled={busy}
+          className="rounded-lg bg-[#1e5c97] text-white text-xs font-semibold px-3 py-1.5 hover:bg-[#174a7c] disabled:opacity-50">
+          {busy ? 'Saving…' : editingId ? 'Update Level' : 'Add Level'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
+          <Layers className="size-4" /> Level History
+        </p>
+        {canSave && !adding && editingId === null && (
+          <button onClick={startAdd}
+            className="flex items-center gap-1.5 rounded-lg bg-[#1e5c97] text-white text-xs font-semibold px-3 py-1.5 hover:bg-[#174a7c] transition-colors">
+            <Plus className="size-3.5" /> Add Level
+          </button>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
+      {adding && editor}
+
+      {rows === null && !error && <Loader2 className="size-5 animate-spin text-[#1e5c97]" />}
+      {rows !== null && rows.length === 0 && !adding && (
+        <p className="text-sm text-slate-400">No level history recorded.</p>
+      )}
+      {rows !== null && rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-2 font-semibold">Level</th>
+                <th className="px-2 py-2 font-semibold">Date From</th>
+                <th className="px-2 py-2 font-semibold">Date To</th>
+                <th className="px-2 py-2 font-semibold">Remarks</th>
+                {canSave && <th className="px-2 py-2" />}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={lvId(r)} className="border-b border-slate-50 last:border-0">
+                  {editingId === lvId(r) ? (
+                    <td colSpan={canSave ? 5 : 4} className="px-2 py-2">{editor}</td>
+                  ) : (
+                    <>
+                      <td className="px-2 py-2 font-medium text-slate-800">{String(r.LevelName ?? '-')}</td>
+                      <td className="px-2 py-2 text-slate-600">{toDMY(r.LevelDateFrom)}</td>
+                      <td className="px-2 py-2 text-slate-600">{toDMY(r.LevelDateTo)}</td>
+                      <td className="px-2 py-2 text-slate-600 whitespace-normal">{String(r.LevelRemarks ?? '') || '-'}</td>
+                      {canSave && (
+                        <td className="px-2 py-2 text-right">
+                          <button onClick={() => startEdit(r)} title="Edit level" className="text-[#1e5c97] hover:text-[#242c43]">
+                            <Pencil className="size-4" />
+                          </button>
+                        </td>
+                      )}
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Bulk-message history (StudentsIndividual.aspx GVBulk) ───────────────────
+// Read-only: every bulk WhatsApp / email / push row queued for this student.
+
+function BulkHistory({ studentId }: { studentId: string }) {
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState<number | null>(null);
+
+  useEffect(() => {
+    apiRequest<Row[]>(`/api/portal/students/${studentId}/bulks`).then(setRows).catch(() => setFailed(true));
+  }, [studentId]);
+
+  if (failed || (rows !== null && rows.length === 0)) return null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-4">
+      <p className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2 mb-3">
+        <MessageSquare className="size-4" /> Bulk Messages
+      </p>
+      {rows === null && <Loader2 className="size-5 animate-spin text-[#1e5c97]" />}
+      {rows !== null && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-2 font-semibold">Type</th>
+                <th className="px-2 py-2 font-semibold">Date</th>
+                <th className="px-2 py-2 font-semibold">Status</th>
+                <th className="px-2 py-2 font-semibold">Phone 1</th>
+                <th className="px-2 py-2 font-semibold">Sent</th>
+                <th className="px-2 py-2 font-semibold">Subject</th>
+                <th className="px-2 py-2 font-semibold">Body</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const bid = num(r, 'BulkId');
+                const body = str(r, 'BulkBody');
+                const expanded = open === bid;
+                return (
+                  <tr key={bid} className="border-b border-slate-50 last:border-0 align-top">
+                    <td className="px-2 py-2 text-slate-700">{str(r, 'BulkType') || '-'}</td>
+                    <td className="px-2 py-2 text-slate-600">{toDMY(r.BulkDate)}</td>
+                    <td className="px-2 py-2 text-slate-600">{str(r, 'BulkStatus') || '-'}</td>
+                    <td className="px-2 py-2 text-slate-600">{str(r, 'BulkPhone1') || '-'}</td>
+                    <td className="px-2 py-2 text-slate-600">{toDMY(r.BulkSentDate)}</td>
+                    <td className="px-2 py-2 text-slate-600 whitespace-normal max-w-48">{str(r, 'BulkSubject') || '-'}</td>
+                    <td className="px-2 py-2 text-slate-600 whitespace-normal max-w-md">
+                      {body.length > 120 && !expanded ? (
+                        <>
+                          {body.slice(0, 120)}…{' '}
+                          <button onClick={() => setOpen(bid)} className="text-[#1e5c97] text-xs font-semibold hover:underline">more</button>
+                        </>
+                      ) : body || '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

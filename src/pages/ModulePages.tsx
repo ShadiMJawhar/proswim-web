@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ModuleListPage, type ModuleConfig, type Row, type ColumnDef } from '../components/ModuleListPage';
+import { ModuleListPage, type ModuleConfig, type Row, type ColumnDef, type FilterOption } from '../components/ModuleListPage';
 import { getStoredUser } from '../api/portalApi';
 
 // Configured list pages for the migrated legacy modules. Each maps 1:1 to a
@@ -17,14 +17,39 @@ const today = () => {
 const PACKAGE_STATUSES = ['Active', 'Closed', 'ClosedNeedPayment', 'MovedtoGroup', 'Freeze', 'Cancelled', 'Transfer']
   .map((v) => ({ value: v, label: v }));
 
+// Legacy txtPackageNeedAttention list (same values/order; "" = All Packs).
 const NEED_ATTENTION = [
-  { value: 'AttendanceMoreThanPayment2', label: 'Need Payment' },
-  { value: 'NeedtoBeClosed', label: 'Need to Be Closed' },
+  { value: 'AttendanceMoreThanPayment1', label: 'Att. > Payment' },
+  { value: 'AttendanceMoreThanPayment2', label: 'Att. >>> Payment' },
   { value: 'NeedFollowup', label: 'Need Followup' },
-  { value: 'Freeze', label: 'Freeze' },
+  { value: 'NeedPayment', label: 'Need Payment' },
+  { value: 'NeedLevel', label: 'Need Level' },
+  { value: 'NeedtoBeClosed', label: 'Need to Be Closed' },
+  { value: 'Done1', label: 'Done 1' },
+  { value: 'Done4', label: 'Done 4' },
+  { value: 'Done10', label: 'Done 10' },
 ];
 
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((v) => ({ value: v, label: v }));
+
+// P_Private_Package_Select @SessionDay compares against DATEPART(dw) as text
+// (Sun=1 … Sat=7), so the private list sends the legacy numeric values.
+const PRIVATE_WEEK_DAYS = [
+  { value: '2', label: 'Mon' }, { value: '3', label: 'Tue' }, { value: '4', label: 'Wed' },
+  { value: '5', label: 'Thu' }, { value: '6', label: 'Fri' }, { value: '7', label: 'Sat' },
+  { value: '1', label: 'Sun' },
+];
+
+const SITEMASTER = ['sitemaster'];
+
+// Legacy PrivatePackagesList row tints by PackageStatus.
+const PACKAGE_ROW_CLASS: Record<string, string> = {
+  Closed: 'bg-green-100',
+  ClosedNeedPayment: 'bg-orange-100',
+  MovedtoGroup: 'bg-sky-100',
+  Freeze: 'bg-pink-100',
+  Cancelled: 'bg-yellow-100',
+};
 
 const EXTRA_TYPES = ['AquaBaby', 'AquaGym', 'AquaMermaid', 'MemberShipPasses', 'MemberShip', 'Others']
   .map((v) => ({ value: v, label: v }));
@@ -189,67 +214,145 @@ const privatePackages: ModuleConfig = {
   lookups: LOOKUPS,
   idKey: 'PackageId',
   editBase: '/privates',
+  // Legacy AutoPostBack: every filter applies on change; the free-text search
+  // keeps the Search button.
   filters: [
     { param: 'searchFor', label: 'Search…', type: 'text' },
-    { param: 'locationIds', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-36' },
-    { param: 'status', label: 'Status', type: 'select', options: PACKAGE_STATUSES, initial: 'Active' },
-    { param: 'needAttention', label: 'Attention', type: 'select', options: NEED_ATTENTION },
-    { param: 'currencies', label: 'Currency', type: 'select', options: CURRENCIES, width: 'max-w-24' },
-    { param: 'sessionDay', label: 'Day', type: 'select', options: WEEK_DAYS, width: 'max-w-24' },
-    { param: 'sessionDate', label: 'On Date', type: 'date' },
-    { param: 'dateFrom', label: 'From', type: 'date' },
-    { param: 'dateTo', label: 'To', type: 'date' },
-    { param: 'onlyDue', label: 'Only Due', type: 'checkbox' },
+    { param: 'locationIds', label: 'Location', type: 'multiselect', optionsKey: 'locations', width: 'w-40', autoSubmit: true },
+    { param: 'status', label: 'ALL Statuses', type: 'select', options: PACKAGE_STATUSES, initial: 'Active', autoSubmit: true },
+    { param: 'needAttention', label: 'All Packs', type: 'select', options: NEED_ATTENTION, autoSubmit: true },
+    { param: 'currencies', label: 'Currency', type: 'select', options: CURRENCIES, width: 'max-w-24', autoSubmit: true },
+    { param: 'sessionDay', label: 'Day', type: 'select', options: PRIVATE_WEEK_DAYS, width: 'max-w-24', autoSubmit: true },
+    { param: 'sessionDate', label: 'On Date', type: 'date', autoSubmit: true },
+    { param: 'dateFrom', label: 'From', type: 'date', autoSubmit: true },
+    { param: 'dateTo', label: 'To', type: 'date', autoSubmit: true },
+    { param: 'onlyDue', label: 'Only Due', type: 'checkbox', autoSubmit: true },
+    // Feedback filters: SiteMaster only, like the legacy chkFeedback block.
+    { param: 'feedbackDateFrom', label: 'Fb From', type: 'date', autoSubmit: true, roles: SITEMASTER },
+    { param: 'feedbackDateTo', label: 'Fb To', type: 'date', autoSubmit: true, roles: SITEMASTER },
+    { param: 'onlyWithFeedback', label: 'Only if feedback Requested', type: 'checkbox', autoSubmit: true, roles: SITEMASTER },
+    { param: 'onlyWithFeedbackResults', label: 'Only if feedback Filled', type: 'checkbox', autoSubmit: true, roles: SITEMASTER },
+    { param: 'onlyWithFeedbackRequireAction', label: 'Only if Action is Needed', type: 'checkbox', autoSubmit: true, roles: SITEMASTER },
   ],
+  columnGroups: [{ key: 'feedback', label: 'Feedback columns', roles: SITEMASTER }],
   columns: [
-    { key: 'LocationNickName', label: 'Location' },
+    { key: 'LocationNickName', label: 'Loc' },
     { key: 'CoachFullName', label: 'Coach' },
     { key: 'PackageDesc', label: 'Package' },
-    { key: 'StudentPackagesCount', label: '#' },
+    { key: 'StudentPackagesCount', label: '# Pkgs' },
     { key: 'PackageStartDate', label: 'Start', format: 'date' },
-    { key: 'PackageNumberOfSessions', label: 'Sessions' },
-    { key: 'SessionsLeft', label: 'Avlb' },
+    { key: 'PackageNumberOfSessions', label: 'Sessions', total: true },
+    { key: 'SessionsLeft', label: 'Avlb', total: true },
     { key: 'PackageCurrency', label: 'Curr' },
-    { key: 'PackageAmount', label: 'Amount', format: 'money' },
-    { key: 'DuePayment', label: 'Due', format: 'money' },
-    { key: 'PackageStatus', label: 'Status' },
+    { key: 'PackageAmount', label: 'Amount', format: 'money', totalBy: 'PackageCurrency', totalRoles: SITEMASTER },
+    { key: 'DuePayment', label: 'Due', format: 'money', totalBy: 'PackageCurrency', totalRoles: SITEMASTER },
     { key: 'Phone', label: 'Phone', extra: true },
     { key: 'PackageRemarks', label: 'Remarks', extra: true },
+    { key: 'PackageStatus', label: 'Status' },
+    { key: 'ActionNeeded', label: 'Action' },
+    // Legacy chkFeedback columns (tbl_FeedbackRequests join in the proc).
+    { key: 'FeedbackTotal', label: 'Score', group: 'feedback' },
+    { key: 'FeedbackQuestion1Answer', label: 'Q1', group: 'feedback' },
+    { key: 'FeedbackQuestion2Answer', label: 'Q2', group: 'feedback' },
+    { key: 'FeedbackQuestion3Answer', label: 'Q3', group: 'feedback' },
+    { key: 'FeedbackQuestion4Answer', label: 'Q4', group: 'feedback' },
+    { key: 'FeedbackQuestion5Answer', label: 'Q5', group: 'feedback' },
+    { key: 'FeedbackDate1', label: 'D1', format: 'date', group: 'feedback' },
+    { key: 'FeedbackDate2', label: 'D2', format: 'date', group: 'feedback' },
+    { key: 'FeedbackSuggestion', label: 'Sgstn', group: 'feedback' },
+    { key: 'FeedbackFollowUpStatus', label: 'Followup', group: 'feedback' },
+    { key: 'FeedbackFollowUpMasterStatus', label: 'Approved', group: 'feedback' },
+    { key: '_followup', label: '', group: 'feedback' },
     { key: '_pay', label: '' },
   ],
-  // Quick jump to a new private payment, prefilled with this package.
+  rowClass: (row) => PACKAGE_ROW_CLASS[String(row.PackageStatus ?? '')] ?? '',
   renderCell: (row, col) => {
-    if (col.key !== '_pay') return undefined;
     const u = getStoredUser();
-    if ((u?.userType || '').toLowerCase() === 'guest' || u?.canSave === false) return undefined;
-    return (
-      <Link
-        to={`/pr-payments/new?packageId=${row.PackageId ?? ''}`}
-        onClick={(e) => e.stopPropagation()}
-        className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
-      >
-        Add Payment
-      </Link>
-    );
+    const canAct = (u?.userType || '').toLowerCase() !== 'guest' && u?.canSave !== false;
+    switch (col.key) {
+      case 'ActionNeeded': {
+        const v = String(row.ActionNeeded ?? '');
+        return v ? <span className="font-bold text-red-600">{v}</span> : '';
+      }
+      // Legacy RowDataBound colour rules on the two follow-up columns.
+      case 'FeedbackFollowUpStatus':
+      case 'FeedbackFollowUpMasterStatus': {
+        const status = String(row.FeedbackFollowUpStatus ?? '');
+        const master = String(row.FeedbackFollowUpMasterStatus ?? '');
+        const cls = master === 'AdminNeedFollowup' ? 'text-red-900 font-semibold'
+          : status === '' || status === 'ReviewedNeedFollowup' ? 'text-red-600 font-semibold' : '';
+        const text = col.key === 'FeedbackFollowUpStatus' && status === '' ? 'Not Available' : String(row[col.key] ?? '');
+        return <span className={cls}>{text || '-'}</span>;
+      }
+      case 'FeedbackSuggestion':
+        return <span title={String(row.FeedbackQuestionSuggestions ?? '')}>{String(row.FeedbackSuggestion ?? '') || '-'}</span>;
+      // Legacy OpenWindowForFeedback → FBAdmin.aspx (no portal equivalent yet).
+      case '_followup': {
+        if (!row.FeedbackID) return '';
+        const q = new URLSearchParams({
+          ID: String(row.FeedbackID), RefID: String(row.FeedbackRefID ?? ''), PsCode: String(row.FeedbackPassCode ?? ''),
+        });
+        return (
+          <a
+            href={`https://admin.proswim-lb.com/Aspxpages/FbAdmin.aspx?${q}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs font-bold text-[#1e5c97] hover:underline whitespace-nowrap"
+          >
+            Followup
+          </a>
+        );
+      }
+      // Quick jump to a new private payment, prefilled with this package.
+      case '_pay':
+        if (!canAct) return '';
+        return (
+          <Link
+            to={`/pr-payments/new?packageId=${row.PackageId ?? ''}`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
+          >
+            Add Payment
+          </Link>
+        );
+      default:
+        return undefined;
+    }
   },
 };
 
 // ── Private / extra / membership payments ────────────────────────────────────
 
+// Legacy PrivatePaymentsList date window: from the 1st of this month once past
+// the 20th (else the 1st of last month), to the 1st of January next year.
+function paymentDateDefaults(): { from: string; to: string } {
+  const d = new Date();
+  const iso = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  const from = d.getDate() >= 20 ? new Date(d.getFullYear(), d.getMonth(), 1) : new Date(d.getFullYear(), d.getMonth() - 1, 1);
+  return { from: iso(from), to: iso(new Date(d.getFullYear() + 1, 0, 1)) };
+}
+
+const MEMBERSHIP_TYPES: FilterOption[] = EXTRA_TYPES.filter((t) => String(t.value).startsWith('MemberShip'));
+
 function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
+  const { from, to } = paymentDateDefaults();
+  // One form serves all three lists: extra-class / membership ids are >= 100000
+  // and the form loads them through P_ExtraClasses_Select, like the legacy popup.
   return {
     title,
     endpoint: `/api/portal/modules/private-payments?mode=${mode}`,
     lookups: LOOKUPS,
     idKey: 'PrivatePaymentID',
-    // Only true private payments have an in-app form; extra/membership stay list-only.
-    ...(mode === 'private' ? { editBase: '/pr-payments' } : {}),
+    editBase: '/pr-payments',
     filters: [
       { param: 'searchFor', label: 'Search…', type: 'text' },
-      { param: 'locationIds', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-36' },
-      { param: 'currencies', label: 'Currency', type: 'select', options: CURRENCIES, width: 'max-w-24' },
-      { param: 'dateFrom', label: 'From', type: 'date' },
-      { param: 'dateTo', label: 'To', type: 'date' },
+      { param: 'locationIds', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-36', autoSubmit: true },
+      ...(mode === 'extra' ? [{ param: 'types', label: 'Type', type: 'select' as const, options: EXTRA_TYPES, autoSubmit: true }] : []),
+      ...(mode === 'memberships' ? [{ param: 'types', label: 'Type', type: 'select' as const, options: MEMBERSHIP_TYPES, autoSubmit: true }] : []),
+      { param: 'currencies', label: 'Currency', type: 'select', options: CURRENCIES, width: 'max-w-24', autoSubmit: true },
+      { param: 'dateFrom', label: 'From', type: 'date', initial: from, autoSubmit: true },
+      { param: 'dateTo', label: 'To', type: 'date', initial: to, autoSubmit: true },
     ],
     columns: [
       { key: 'ClassType', label: 'Type' },
@@ -257,31 +360,31 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
       { key: 'IDShow', label: 'ID' },
       { key: 'IssuedTo', label: 'Issued To' },
       { key: 'PrivatePaymentDate', label: 'Date', format: 'date' },
-      { key: 'PrivatePaymentTotalAmount', label: 'Amount', format: 'money' },
+      { key: 'PrivatePaymentTotalAmount', label: 'Amount', format: 'money', total: true },
       { key: 'PrivatePaymentPaidAmount', label: 'Paid', format: 'money' },
       { key: 'PrivatePaymentPaidCurrency', label: 'Curr' },
       { key: 'PaymentMode', label: 'Mode' },
-      { key: 'Serial', label: 'Delivery S/N', extra: true },
-      { key: 'PayLoc', label: 'Pay Loc', extra: true },
-      ...(mode === 'private' ? [{ key: '_pay', label: '' }] : []),
+      { key: 'Serial', label: 'Delivery S/N' },
+      { key: 'PayLoc', label: 'Pay Loc' },
+      { key: '_pay', label: '' },
     ],
-    // Private mode: quick jump to a new payment prefilled with the same package.
-    ...(mode === 'private' ? {
-      renderCell: (row: Row, col: ColumnDef) => {
-        if (col.key !== '_pay') return undefined;
-        const u = getStoredUser();
-        if ((u?.userType || '').toLowerCase() === 'guest' || u?.canSave === false) return undefined;
-        return (
-          <Link
-            to={`/pr-payments/new?packageId=${row.PrivatePackageId ?? ''}`}
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
-          >
-            Add Payment
-          </Link>
-        );
-      },
-    } : {}),
+    // Quick jump to a new payment prefilled with the same package (legacy "Add
+    // Payment" link). Hidden for guests, non-savers and payment/audit accounts.
+    renderCell: (row: Row, col: ColumnDef) => {
+      if (col.key !== '_pay') return undefined;
+      const u = getStoredUser();
+      const ut = (u?.userType || '').toLowerCase();
+      if (ut === 'guest' || ut === 'payment/audit' || u?.canSave === false) return undefined;
+      return (
+        <Link
+          to={`/pr-payments/new?packageId=${row.PrivatePackageId ?? ''}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
+        >
+          Add Payment
+        </Link>
+      );
+    },
   };
 }
 

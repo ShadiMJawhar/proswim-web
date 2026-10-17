@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Loader2, AlertCircle, ChevronLeft, ChevronRight,
-  ArrowUpDown, ArrowUp, ArrowDown, Download, Send, ExternalLink, Pencil, Plus,
+  ArrowUpDown, ArrowUp, ArrowDown, Download, Send, ExternalLink, Pencil, Plus, ListChecks,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
@@ -65,17 +65,41 @@ const EXTRA_COLS: Array<{ key: SortKey; label: string }> = [
   { key: 'prvFirstDate', label: 'Prv First' },
   { key: 'prvLastDate', label: 'Prv Last' },
   { key: 'studentNationality1', label: 'Nationality' },
+  { key: 'studentNationality2', label: 'Nationality 2' },
   { key: 'studentMomOccupation', label: 'Mom Occ.' },
   { key: 'studentDadOccupation', label: 'Dad Occ.' },
   { key: 'studentAddressFullAddress', label: 'Address' },
   { key: 'scheduleRemark', label: 'Schedule' },
 ];
 
+// ddlType in StudentsList.aspx: code sent to the proc → friendly text shown.
+const TYPE_LABELS: Record<string, string> = {
+  Group: 'Group',
+  GroupActive: 'Group Active',
+  Private: 'Private',
+  PrivateActive: 'Private Active',
+  GroupActiveOrPrivateActive: 'Group Reg Or Private Act',
+  AquaBaby: 'AquaBaby',
+  School: 'School',
+  Gifted: 'Gifted',
+  ProSwimmer: 'ProSwimmer',
+  WallOfFame: 'WallOfFame',
+  GroupOrPrivate: 'Group Or Private',
+  GroupAndPrivate: 'Group And Private',
+  GroupAndSchool: 'Group And School',
+  GroupOrSchool: 'Group Or School',
+  WaitingList: 'Waiting List',
+  BDay_PrevMonth: 'BDay_PrevMonth',
+  BDay_ThisMonth: 'BDay_ThisMonth',
+  BDay_NextMonth: 'BDay_NextMonth',
+};
+
 function fmtCell(key: SortKey, v: unknown): string {
   if (v == null || v === '') return '-';
+  // Legacy grid shows every date, Born included, as dd/MM/yyyy.
   if (typeof v === 'string' && /Date|Born/i.test(key)) {
     const d = new Date(v);
-    if (!isNaN(d.getTime())) return key === 'studentDateOfBirth' ? String(d.getFullYear()) : toDMY(d);
+    if (!isNaN(d.getTime())) return toDMY(d);
   }
   return String(v);
 }
@@ -134,17 +158,28 @@ export function StudentsPage() {
       .finally(() => setLoading(false));
   }, [query]);
 
-  function applyFilters(e?: React.FormEvent) {
-    e?.preventDefault();
+  // Builds and commits the query from the current filter state. The dropdowns
+  // and the Deleted checkbox auto-post back like the legacy page (AutoPostBack),
+  // so they pass their new value as an override (state updates are async); the
+  // text box still waits for the Search button / Enter.
+  function applyFilters(overrides: Partial<{
+    locationId: number; school: string; type: string; yob: string; occupation: string; showDeleted: boolean;
+  }> = {}) {
+    const v = { locationId, school, type, yob, occupation, showDeleted, ...overrides };
     const q = new URLSearchParams();
     if (search.trim()) q.set('searchFor', search.trim());
-    if (locationId) q.set('locationId', String(locationId));
-    if (school) q.set('school', school);
-    if (type) q.set('type', type);
-    if (yob) q.set('yob', yob);
-    if (occupation) q.set('parentOccupation', occupation);
-    if (showDeleted) q.set('showDeleted', 'true');
+    if (v.locationId) q.set('locationId', String(v.locationId));
+    if (v.school) q.set('school', v.school);
+    if (v.type) q.set('type', v.type);
+    if (v.yob) q.set('yob', v.yob);
+    if (v.occupation) q.set('parentOccupation', v.occupation);
+    if (v.showDeleted) q.set('showDeleted', 'true');
     setQuery(q.toString());
+  }
+
+  function submitSearch(e: React.FormEvent) {
+    e.preventDefault();
+    applyFilters();
   }
 
   const filtered = useMemo(
@@ -248,7 +283,7 @@ export function StudentsPage() {
       />
 
       {/* Filter bar, mirrors legacy StudentsList.aspx controls */}
-      <form onSubmit={applyFilters} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-2">
+      <form onSubmit={submitSearch} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-3 mb-4 flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search className="size-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
@@ -261,7 +296,7 @@ export function StudentsPage() {
 
         <select
           value={locationId}
-          onChange={(e) => setLocationId(Number(e.target.value))}
+          onChange={(e) => { const v = Number(e.target.value); setLocationId(v); applyFilters({ locationId: v }); }}
           disabled={locationLocked}
           className={`${selectCls} disabled:bg-slate-50 disabled:text-slate-400`}
         >
@@ -271,28 +306,28 @@ export function StudentsPage() {
           ))}
         </select>
 
-        <select value={type} onChange={(e) => setType(e.target.value)} className={selectCls}>
-          <option value="">All types</option>
-          {filters?.types.map((t) => <option key={t} value={t}>{t}</option>)}
+        <select value={type} onChange={(e) => { setType(e.target.value); applyFilters({ type: e.target.value }); }} className={selectCls}>
+          <option value="">ALL</option>
+          {filters?.types.map((t) => <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>)}
         </select>
 
-        <select value={school} onChange={(e) => setSchool(e.target.value)} className={`${selectCls} max-w-36`}>
+        <select value={school} onChange={(e) => { setSchool(e.target.value); applyFilters({ school: e.target.value }); }} className={`${selectCls} max-w-36`}>
           <option value="">All schools</option>
           {filters?.schools.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
 
-        <select value={yob} onChange={(e) => setYob(e.target.value)} className={selectCls}>
+        <select value={yob} onChange={(e) => { setYob(e.target.value); applyFilters({ yob: e.target.value }); }} className={selectCls}>
           <option value="">All years</option>
           {filters?.yobs.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
 
-        <select value={occupation} onChange={(e) => setOccupation(e.target.value)} className={`${selectCls} max-w-36`}>
+        <select value={occupation} onChange={(e) => { setOccupation(e.target.value); applyFilters({ occupation: e.target.value }); }} className={`${selectCls} max-w-36`}>
           <option value="">All occupations</option>
           {filters?.occupations.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
 
         <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-          <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} className="accent-[#1e5c97]" />
+          <input type="checkbox" checked={showDeleted} onChange={(e) => { setShowDeleted(e.target.checked); applyFilters({ showDeleted: e.target.checked }); }} className="accent-[#1e5c97]" />
           Deleted
         </label>
         <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
@@ -353,7 +388,14 @@ export function StudentsPage() {
               </thead>
               <tbody>
                 {pageRows.map((s) => (
-                  <tr key={s.studentId} className="group border-b border-slate-50 last:border-0">
+                  <tr
+                    key={s.studentId}
+                    // Legacy GVResult_RowDataBound: deleted → pink + strike-through,
+                    // inactive → pink. (rgb(230,200,200) in the old grid.)
+                    className={`group border-b border-slate-50 last:border-0 ${
+                      s.studentDeleted ? 'bg-[#e6c8c8]/60 line-through' : !s.studentActive ? 'bg-[#e6c8c8]/60' : ''
+                    }`}
+                  >
                     {cols.map((c, i) => (
                       <td key={c.key} className="px-3 py-2.5 text-slate-500 max-w-56 overflow-hidden text-ellipsis">
                         {i === 0 ? (
@@ -401,6 +443,15 @@ export function StudentsPage() {
                             ? <Loader2 className="size-4 animate-spin" />
                             : <Send className="size-4" />}
                         </button>
+                        {!isGuest && (
+                          <Link
+                            to={`/students/${s.studentId}/checklist`}
+                            title="Skills checklist"
+                            className="text-amber-600 hover:text-amber-800"
+                          >
+                            <ListChecks className="size-4" />
+                          </Link>
+                        )}
                         {!isGuest && (
                           <a
                             href={`http://www.proswim-lb.com/student.aspx?StudentId=${s.studentId}`}

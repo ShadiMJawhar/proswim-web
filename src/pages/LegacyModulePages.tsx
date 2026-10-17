@@ -56,8 +56,11 @@ const packTypes: ModuleConfig = {
   lookups: LOOKUPS,
   idKey: 'PrivatePackageId',
   editBase: '/pack-types',
+  // Legacy: the location drop-down auto-posts back, is locked for 'user'
+  // accounts, and the Add New popup opens on the selected location.
+  newLinkParams: ['locationId'],
   filters: [
-    { param: 'locationId', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-44' },
+    { param: 'locationId', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-44', autoSubmit: true, lockedFor: ['user'] },
   ],
   columns: [
     { key: 'PrivatePackageName', label: 'Package Name' },

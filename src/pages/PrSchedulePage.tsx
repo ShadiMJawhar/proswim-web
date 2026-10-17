@@ -1,11 +1,20 @@
+// Private schedule calendar (PrivatePackagesListView.aspx): one band per coach,
+// one row per time, one column per day; session boxes coloured by attendance
+// progress. Slot and coach remarks are the legacy tbl_Remarks rows
+// ('TimePrivate' / 'CoachPrivate'), edited inline instead of the Remarks.aspx popup.
+
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, AlertCircle, Search, ChevronLeft, ChevronRight, Pause, StickyNote, Phone, CreditCard, Package, MessageSquarePlus } from 'lucide-react';
+import {
+  Loader2, AlertCircle, Search, ChevronLeft, ChevronRight, Pause, StickyNote, Phone,
+  CreditCard, Package, MessageSquarePlus, Plus, X,
+} from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
-import { useUrlState } from '../lib/urlState';
+import { useUrlState, useUrlPatch } from '../lib/urlState';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
+import { toast } from '../components/Toast';
 
 type Row = Record<string, unknown>;
 
@@ -13,6 +22,13 @@ interface PrivateData {
   rows: Row[];
   countsHeader: Row[];
   timeRemarks: Row[];
+}
+
+interface RemarkTarget {
+  type: 'TimePrivate' | 'CoachPrivate';
+  id: number;
+  title: string;
+  initial: string;
 }
 
 const s = (v: unknown) => (v == null ? '' : String(v));
@@ -66,10 +82,19 @@ function fmtISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Legacy: Now.AddDays(DayOfWeek.Monday - Now.DayOfWeek); on a Sunday that is the coming Monday.
 function mondayOfWeek(base: Date): Date {
   const d = new Date(base);
-  d.setDate(d.getDate() + ((1 - d.getDay() + 7) % 7 === 0 ? 0 : 1 - d.getDay()));
+  d.setDate(d.getDate() + 1 - d.getDay());
   return d;
+}
+
+// Legacy synthetic id of a coach/weekday/time slot remark (RemarkType
+// 'TimePrivate'): coachId*100000 + DayOfWeek*10000 + HHmm, Sunday = 0 like
+// .NET's DayOfWeek (same numbering as JS getDay()).
+function slotRemarkId(coachId: number, dateStr: string, time: string): number {
+  const d = new Date(dateStr);
+  return coachId * 100000 + d.getDay() * 10000 + Number(time.replace(':', '') || 0);
 }
 
 const COUNT_LABELS: Record<string, string> = {
@@ -79,19 +104,32 @@ const COUNT_LABELS: Record<string, string> = {
   Freeze: 'Freeze Packs',
 };
 
+// Attention counters open the private-packages list pre-filtered. The proc has
+// no 'Freeze' need-attention branch, so that one filters by package status.
+function counterLink(criteria: string, locationId: number): string {
+  const q = new URLSearchParams({ locationIds: String(locationId) });
+  if (criteria === 'Freeze') q.set('status', 'Freeze');
+  else q.set('needAttention', criteria);
+  return `/privates?${q}`;
+}
+
 const DAYS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function PrSchedulePage() {
   const user = getStoredUser();
   const userType = (user?.userType || '').toLowerCase();
-  const locationLocked = userType === 'user' && !!user?.primaryLocationId;
+  const ownLocation = user?.primaryLocationId ?? 0;
+  const isGuest = userType === 'guest';
+  const locationLocked = userType === 'user' && ownLocation > 0;
+  const canSave = user?.canSave !== false;
 
   const monday = mondayOfWeek(new Date());
   const [locations, setLocations] = useState<{ locationId: number; locationNickName: string | null }[]>([]);
   const [coaches, setCoaches] = useState<{ coachId: number; coachFullName: string | null }[]>([]);
   // Filters live in the URL so leaving the schedule and coming back restores
   // them; the mount-time load below then reloads the same week and criteria.
-  const [locationId, setLocationId] = useUrlState('locationId', user?.primaryLocationId ?? 0);
+  const [locationId, setLocationId] = useUrlState('locationId', ownLocation);
   const [coachId, setCoachId] = useUrlState('coachId', 0);
   const [day, setDay] = useUrlState('day', '');
   const [search, setSearch] = useUrlState('search', '');
@@ -99,15 +137,36 @@ export function PrSchedulePage() {
   const [dateTo, setDateTo] = useUrlState('dateTo', fmtISO(new Date(monday.getTime() + 5 * 86400000)));
   const [onlyActive, setOnlyActive] = useUrlState('onlyActive', true);
   const [freeTimes, setFreeTimes] = useUrlState('freeTimes', false);
+  const patchUrl = useUrlPatch();
   const [data, setData] = useState<PrivateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [remarkEdit, setRemarkEdit] = useState<RemarkTarget | null>(null);
+
+  // Legacy _AccessReadOnly: guests, and user/superuser accounts looking at a
+  // location other than their own, get a view-only schedule (no package /
+  // payment / remark actions, no Add New, plain day headers).
+  const readOnly = isGuest
+    || ((userType === 'user' || userType === 'superuser') && ownLocation > 0 && locationId !== ownLocation);
+  const canAddNew = !readOnly && canSave;
 
   useEffect(() => {
-    apiRequest<{ locations: typeof locations; coaches: typeof coaches }>('/api/portal/students/lookups')
-      .then((lk) => { setLocations(lk.locations); setCoaches(lk.coaches); })
+    apiRequest<{ locations: typeof locations }>('/api/portal/students/lookups')
+      .then((lk) => setLocations(lk.locations))
       .catch(() => {});
   }, []);
+
+  // Coach filter = the active coaches of the selected location (legacy
+  // ddlLocations_SelectedIndexChanged → Coach_Select(active, locationId)).
+  useEffect(() => {
+    apiRequest<{ coaches: typeof coaches }>(`/api/portal/schedule/coaches?locationId=${locationId}`)
+      .then((r) => {
+        const list = r.coaches ?? [];
+        setCoaches(list);
+        if (coachId && !list.some((c) => c.coachId === coachId)) setCoachId(0);
+      })
+      .catch(() => {});
+  }, [locationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback((from: string, to: string) => {
     setLoading(true);
@@ -130,7 +189,7 @@ export function PrSchedulePage() {
     const from = offset === 0 ? mondayOfWeek(new Date()) : new Date(new Date(dateFrom).getTime() + offset * 7 * 86400000);
     const f = fmtISO(from);
     const t = fmtISO(new Date(from.getTime() + 5 * 86400000));
-    setDateFrom(f); setDateTo(t);
+    patchUrl({ dateFrom: f, dateTo: t });
     load(f, t);
   }
 
@@ -145,10 +204,10 @@ export function PrSchedulePage() {
   coachList.sort((a, b) => a.name.localeCompare(b.name));
 
   const days = [...new Set(rows.map((r) => s(r.PrivateSessionDate)))].filter(Boolean).sort();
+  const sessionCount = rows.filter((r) => n(r.PrivateSessionId) > 0).length;
 
   function timeRemark(coachIdVal: number, dateStr: string, time: string): string {
-    const d = new Date(dateStr);
-    const key = coachIdVal * 100000 + d.getDay() * 10000 + Number(time.replace(':', '') || 0);
+    const key = slotRemarkId(coachIdVal, dateStr, time);
     const hit = (data?.timeRemarks ?? []).find((r) => n(r.RemarkTypeID) === key);
     return hit ? s(hit.Remark) : '';
   }
@@ -173,17 +232,34 @@ export function PrSchedulePage() {
     }
   }
 
-  async function editRemark(studentId: number) {
-    const remark = window.prompt('Remark for this student (empty clears it):', '');
-    if (remark === null) return;
+  // Legacy OpenWindowForRemarks(id, 'TimePrivate') from a free slot or a session box.
+  function editSlotRemark(coach: { name: string; id: number }, dateStr: string, time: string) {
+    const d = new Date(dateStr);
+    setRemarkEdit({
+      type: 'TimePrivate',
+      id: slotRemarkId(coach.id, dateStr, time),
+      title: `Remarks for ${coach.name} · ${DOW[d.getDay()]} ${time} [Private]`,
+      initial: timeRemark(coach.id, dateStr, time),
+    });
+  }
+
+  // Legacy OpenWindowForRemarks(coachId, 'CoachPrivate') from the coach band.
+  function editCoachRemark(coach: { name: string; id: number; remark: string }) {
+    setRemarkEdit({ type: 'CoachPrivate', id: coach.id, title: `Remarks for coach ${coach.name} [Private]`, initial: coach.remark });
+  }
+
+  // P_Remarks_Insert replaces the (type, id) row, an empty text clears it.
+  async function saveRemark(target: RemarkTarget, remark: string) {
     try {
       await apiRequest('/api/portal/schedule/remark', {
         method: 'POST',
-        body: JSON.stringify({ remarkType: 'Student', remarkTypeId: studentId, remark }),
+        body: JSON.stringify({ remarkType: target.type, remarkTypeId: target.id, remark }),
       });
+      setRemarkEdit(null);
+      toast.success(remark.trim() ? 'Remark saved.' : 'Remark cleared.');
       load(dateFrom, dateTo);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save the remark.');
+      toast.error(e instanceof Error ? e.message : 'Could not save the remark.');
     }
   }
 
@@ -196,15 +272,36 @@ export function PrSchedulePage() {
       <PageHero
         compact
         title="Private Schedule"
-        subtitle={`${toDMY(dateFrom)} → ${toDMY(dateTo)}`}
+        subtitle={`${toDMY(dateFrom)} → ${toDMY(dateTo)}${data ? ` · ${sessionCount} sessions` : ''}`}
         slide={0}
         right={
-          <div className="flex gap-2 flex-wrap justify-end">
+          <div className="flex gap-2 flex-wrap justify-end items-center">
             {(data?.countsHeader ?? []).filter((c) => n(c.Cnt) > 0).map((c) => (
-              <span key={s(c.Criteria)} className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1">
+              <Link
+                key={s(c.Criteria)}
+                to={counterLink(s(c.Criteria), locationId)}
+                className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1 hover:bg-red-100"
+              >
                 {n(c.Cnt)} {COUNT_LABELS[s(c.Criteria)] ?? s(c.Criteria)}
-              </span>
+              </Link>
             ))}
+            {canAddNew ? (
+              <Link
+                to={`/privates/new?locationId=${locationId}`}
+                className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5"
+              >
+                <Plus className="size-3.5" /> Add New
+              </Link>
+            ) : (
+              <button
+                type="button"
+                disabled
+                title={isGuest ? 'Guests cannot add packages' : 'Switch to your own location to add a package'}
+                className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 opacity-50 cursor-not-allowed"
+              >
+                <Plus className="size-3.5" /> Add New
+              </button>
+            )}
           </div>
         }
       />
@@ -278,6 +375,12 @@ export function PrSchedulePage() {
         </div>
       )}
 
+      {readOnly && data && (
+        <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-3">
+          <p className="text-xs text-amber-700">View-only: package, payment and remark actions are available on your own location only.</p>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center h-64">
           <Loader2 className="size-8 text-[#1e5c97] animate-spin" />
@@ -303,10 +406,13 @@ export function PrSchedulePage() {
                     times={times}
                     coachRows={coachRows}
                     todayISO={todayISO}
+                    locationId={locationId}
+                    readOnly={readOnly}
                     timeRemark={timeRemark}
                     phones={phones}
                     onPhone={showPhone}
-                    onRemark={editRemark}
+                    onSlotRemark={(d, t) => editSlotRemark(coach, d, t)}
+                    onCoachRemark={() => editCoachRemark(coach)}
                   />
                 );
               })}
@@ -327,11 +433,22 @@ export function PrSchedulePage() {
         <span className="flex items-center gap-1"><span className="inline-block w-4 h-3 border-2 border-dotted border-green-600" /> is a makeup</span>
         <span className="flex items-center gap-1"><span className="inline-block w-4 h-3 border-2 border-[#e60650]" /> merged slot</span>
       </div>
+
+      {remarkEdit && (
+        <RemarkModal
+          target={remarkEdit}
+          onSave={(text) => saveRemark(remarkEdit, text)}
+          onClose={() => setRemarkEdit(null)}
+        />
+      )}
     </div>
   );
 }
 
-function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, todayISO, timeRemark, phones, onPhone, onRemark }: {
+function FragmentRows({
+  coach, total, remarksOnly, days, times, coachRows, todayISO, locationId, readOnly,
+  timeRemark, phones, onPhone, onSlotRemark, onCoachRemark,
+}: {
   coach: { name: string; id: number; remark: string };
   total: number;
   remarksOnly: number;
@@ -339,10 +456,13 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
   times: string[];
   coachRows: Row[];
   todayISO: string;
+  locationId: number;
+  readOnly: boolean;
   timeRemark: (coachId: number, dateStr: string, time: string) => string;
   phones: Record<number, string>;
   onPhone: (studentId: number) => void;
-  onRemark: (studentId: number) => void;
+  onSlotRemark: (dateStr: string, time: string) => void;
+  onCoachRemark: () => void;
 }) {
   return (
     <>
@@ -356,23 +476,44 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
               <StickyNote className="size-3.5 text-amber-600" />
             </span>
           )}
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={onCoachRemark}
+              title={coach.remark ? 'Edit coach remark' : 'Add coach remark'}
+              className="inline-flex align-middle ml-1 text-slate-500 hover:text-amber-600"
+            >
+              <MessageSquarePlus className="size-3.5" />
+            </button>
+          )}
+          {coach.remark && <span className="ml-2 font-normal text-xs text-slate-600">{coach.remark}</span>}
           <span className="ml-3 font-normal text-slate-500">
             [Total Sessions = {total}] [Remarks Only = {remarksOnly}]
           </span>
         </td>
       </tr>
-      {/* Day header */}
+      {/* Day header: each day opens the daily attendance for that date + location (legacy OpenWindowForDailyAttendance). */}
       <tr>
         <td className="bg-[#aabacf] p-1.5 text-center font-semibold w-[90px] min-w-[90px]">Time</td>
         {days.map((d) => {
           const dd = new Date(d);
-          const isToday = d.slice(0, 10) === todayISO;
+          const iso = d.slice(0, 10);
+          const isToday = iso === todayISO;
+          const label = `${DOW[dd.getDay()]} ${String(dd.getDate()).padStart(2, '0')}`;
           return (
             <td
               key={d}
               className={`p-1.5 text-center font-semibold ${isToday ? 'bg-[#555555] text-white border-2 border-black' : 'bg-[#aabacf]'}`}
             >
-              {dd.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit' })}
+              {readOnly ? label : (
+                <Link
+                  to={`/pr-attendance?date=${iso}&locationId=${locationId}`}
+                  title="Open daily attendance for this day"
+                  className={`hover:underline ${isToday ? 'text-white' : 'text-slate-800'}`}
+                >
+                  {label}
+                </Link>
+              )}
             </td>
           );
         })}
@@ -397,7 +538,16 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
                   ...mergedBorder(real),
                 }}
               >
-                {free && remark && <div className="p-1 text-[10px] text-slate-600">{remark}</div>}
+                {free && (
+                  <div className="p-1 text-[10px] text-slate-600 flex items-start gap-1">
+                    {!readOnly && (
+                      <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
+                        <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-400'} hover:text-amber-600`} />
+                      </button>
+                    )}
+                    <span>{remark}</span>
+                  </div>
+                )}
                 {real.map((r, i) => (
                   <div key={i} className="rounded p-1 mb-0.5" style={{ ...boxStyle(r), ...boxBorder(r) }}>
                     <Link
@@ -417,7 +567,13 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
                             : 'bg-red-500 border-red-700'
                         }`}
                       />
-                      <span>Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}</span>
+                      {readOnly ? (
+                        <span>Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}</span>
+                      ) : (
+                        <Link to={`/privates/${n(r.PackageId)}`} title="Open package" className="hover:underline">
+                          Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}
+                        </Link>
+                      )}
                       <span className={n(r.DuePercent) > 0 ? 'text-red-600 font-semibold' : ''}>
                         Due {n(r.DuePercent)}%
                       </span>
@@ -435,17 +591,21 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
                         <span className="text-[9px] font-semibold bg-white/60 rounded px-1">{s(r.PackageFollowUp)}</span>
                       )}
                     </div>
-                    {/* Actions: package, add payment (in-app forms), remark, phone */}
+                    {/* Actions: package, add payment, slot remark (hidden in read-only), phone */}
                     <div className="flex items-center gap-1.5 mt-1">
-                      <Link to={`/privates/${n(r.PackageId)}`} title="Open package">
-                        <Package className="size-3 text-slate-600 hover:text-[#1e5c97]" />
-                      </Link>
-                      <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment">
-                        <CreditCard className={`size-3 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
-                      </Link>
-                      <button type="button" onClick={() => onRemark(n(r.Std1ID))} title="Add remark">
-                        <MessageSquarePlus className="size-3 text-slate-600 hover:text-amber-600" />
-                      </button>
+                      {!readOnly && (
+                        <>
+                          <Link to={`/privates/${n(r.PackageId)}`} title="Open package">
+                            <Package className="size-3 text-slate-600 hover:text-[#1e5c97]" />
+                          </Link>
+                          <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment">
+                            <CreditCard className={`size-3 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
+                          </Link>
+                          <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
+                            <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-600'} hover:text-amber-600`} />
+                          </button>
+                        </>
+                      )}
                       <button type="button" onClick={() => onPhone(n(r.Std1ID))} title="Show phone">
                         <Phone className="size-3 text-slate-600 hover:text-[#1e5c97]" />
                       </button>
@@ -463,6 +623,49 @@ function FragmentRows({ coach, total, remarksOnly, days, times, coachRows, today
         </tr>
       ))}
     </>
+  );
+}
+
+// Inline replacement for the legacy Remarks.aspx popup (multi-line text, Save Changes).
+function RemarkModal({ target, onSave, onClose }: {
+  target: RemarkTarget;
+  onSave: (text: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(target.initial);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onMouseDown={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-bold text-slate-800">{target.title}</p>
+          <button type="button" onClick={onClose} title="Close">
+            <X className="size-4 text-slate-400 hover:text-slate-600" />
+          </button>
+        </div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          placeholder="Remarks"
+          className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40"
+        />
+        <p className="text-[11px] text-slate-400 mt-1">Leave the text empty to clear the remark.</p>
+        <div className="flex justify-end gap-2 mt-3">
+          <button type="button" onClick={onClose} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => { setBusy(true); try { await onSave(text); } finally { setBusy(false); } }}
+            className="btn-grad rounded-lg px-4 py-1.5 text-xs font-semibold disabled:opacity-60"
+          >
+            {busy ? 'Saving…' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

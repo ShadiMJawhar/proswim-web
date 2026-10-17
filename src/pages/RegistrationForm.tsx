@@ -5,7 +5,7 @@
 // money-on-hold / reason, kit, remarks, Save / Save-and-Pay / Delete.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Loader2, AlertCircle, Save, Search, X, Calculator,
   CreditCard, Trash2, User,
@@ -186,6 +186,22 @@ export function RegistrationForm() {
   function setSlot(i: number, value: number) {
     setClassIds((prev) => prev.map((v, idx) => (idx === i ? value : v)));
   }
+
+  // Legacy RegistrationsIndividual.aspx?StudentID=…: a new registration opened
+  // from the student form's "Save and Register" comes with the student picked.
+  const [urlParams] = useSearchParams();
+  const prefillStudentId = isNew ? Number(urlParams.get('studentId') ?? 0) : 0;
+  useEffect(() => {
+    if (!prefillStudentId) return;
+    apiRequest<Row>(`/api/portal/students/${prefillStudentId}`)
+      .then((r) => {
+        setStudentId(prefillStudentId);
+        setStudentLabel(s(r.StudentFullName) || `Student #${prefillStudentId}`);
+        const loc = n(r.StudentPrimaryLocationId);
+        if (loc > 0) setLocationId(loc);
+      })
+      .catch(() => { setStudentId(prefillStudentId); setStudentLabel(`Student #${prefillStudentId}`); });
+  }, [prefillStudentId]);
 
   function pickStudent(p: Picker) {
     setStudentId(p.id);
