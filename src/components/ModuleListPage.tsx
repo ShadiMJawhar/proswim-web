@@ -67,6 +67,9 @@ export interface ModuleConfig {
   renderCell?: (row: Row, col: ColumnDef, reload?: () => void) => React.ReactNode | undefined;
   /** Optional per-row CSS classes (e.g. tint a row by status). */
   rowClass?: (row: Row) => string;
+  /** Summary shown next to the row count, computed over ALL loaded rows
+   *  (e.g. legacy "of total : [LBP x] AND [USD y]"). */
+  summary?: { roles?: string[]; text: (rows: Row[]) => string };
   /** Base route for add/edit forms (e.g. "/semesters"). Enables Add New + row Edit. */
   editBase?: string;
   /** Filter params forwarded to the Add New form as query params (e.g.
@@ -364,6 +367,8 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         title={config.title}
         subtitle={
           (loading ? 'Loading…' : `${sorted.length.toLocaleString()} rows`) +
+          (!loading && config.summary && roleOk(config.summary.roles) && sorted.length
+            ? ` · of total : ${config.summary.text(sorted)}` : '') +
           (config.subtitle ? ` · ${config.subtitle}` : '')
         }
         slide={config.title.length % 4}

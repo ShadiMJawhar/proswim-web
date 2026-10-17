@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ModuleListPage, type ModuleConfig, type Row, type ColumnDef, type FilterOption } from '../components/ModuleListPage';
 import { getStoredUser } from '../api/portalApi';
+import { legacyCurrencyTotal } from '../lib/totals';
 
 // Configured list pages for the migrated legacy modules. Each maps 1:1 to a
 // legacy XxxList.aspx page and its stored procedure (see PortalModulesController).
@@ -345,6 +346,7 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
     lookups: LOOKUPS,
     idKey: 'PrivatePaymentID',
     editBase: '/pr-payments',
+    summary: { roles: SITEMASTER, text: (rows) => legacyCurrencyTotal(rows, 'PrivatePaymentPaidAmount', 'PrivatePaymentPaidCurrency') },
     filters: [
       { param: 'searchFor', label: 'Search…', type: 'text' },
       { param: 'locationIds', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-36', autoSubmit: true },
@@ -360,8 +362,9 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
       { key: 'IDShow', label: 'ID' },
       { key: 'IssuedTo', label: 'Issued To' },
       { key: 'PrivatePaymentDate', label: 'Date', format: 'date' },
-      { key: 'PrivatePaymentTotalAmount', label: 'Amount', format: 'money', total: true },
-      { key: 'PrivatePaymentPaidAmount', label: 'Paid', format: 'money' },
+      // Legacy footer + "of total" header: SiteMaster only (money totals).
+      { key: 'PrivatePaymentTotalAmount', label: 'Amount', format: 'money', total: true, totalRoles: SITEMASTER },
+      { key: 'PrivatePaymentPaidAmount', label: 'Paid', format: 'money', totalBy: 'PrivatePaymentPaidCurrency', totalRoles: SITEMASTER },
       { key: 'PrivatePaymentPaidCurrency', label: 'Curr' },
       { key: 'PaymentMode', label: 'Mode' },
       { key: 'Serial', label: 'Delivery S/N' },

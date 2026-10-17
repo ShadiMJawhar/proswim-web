@@ -560,7 +560,14 @@ ${rows}
     w.document.close();
   }
 
-  const paymentsTotal = payments.reduce((sum, p) => sum + n(p.PrivatePaymentTotalAmount), 0);
+  // Legacy lblDue rule: LBP packages add up PrivatePaymentTotalAmount (the LBP
+  // figure); USD packages add USD paid amounts + ReverseCalcPrivatePayment
+  // (the USD value) of LBP payments.
+  const paymentsTotal = payments.reduce((sum, p) => {
+    if (currency === 'LBP') return sum + n(p.PrivatePaymentTotalAmount);
+    const cur = String(p.PrivatePaymentPaidCurrency ?? '').trim().toUpperCase();
+    return sum + (cur === 'LBP' ? n(p.ReverseCalcPrivatePayment) : n(p.PrivatePaymentPaidAmount));
+  }, 0);
 
   if (loading) {
     return (
@@ -1005,7 +1012,7 @@ ${rows}
                 <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-100">
                   <th className="px-2 py-2 font-semibold">ID</th>
                   <th className="px-2 py-2 font-semibold">Date</th>
-                  <th className="px-2 py-2 font-semibold">Amount</th>
+                  <th className="px-2 py-2 font-semibold">LBP amount</th>
                   <th className="px-2 py-2 font-semibold">Paid</th>
                   <th className="px-2 py-2 font-semibold">Mode</th>
                   <th className="px-2 py-2 font-semibold">Issued to</th>
@@ -1032,8 +1039,9 @@ ${rows}
               <tfoot>
                 <tr className="border-t-2 border-slate-200 font-bold text-slate-700">
                   <td className="px-2 py-1.5" colSpan={2}>Total</td>
-                  <td className="px-2 py-1.5">{paymentsTotal.toLocaleString()} {currency}</td>
-                  <td className="px-2 py-1.5" colSpan={4}>Net to pay {netToPay.toLocaleString()} {currency} · due {(netToPay - paymentsTotal).toLocaleString()}</td>
+                  <td className="px-2 py-1.5" />
+                  <td className="px-2 py-1.5">Paid {Math.round(paymentsTotal).toLocaleString()} {currency}</td>
+                  <td className="px-2 py-1.5" colSpan={3}>Net to pay {netToPay.toLocaleString()} {currency} · due {Math.round(netToPay - paymentsTotal).toLocaleString()} {currency}</td>
                 </tr>
               </tfoot>
             </table>

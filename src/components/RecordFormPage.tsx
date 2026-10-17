@@ -331,7 +331,7 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
             <input value={String(v ?? '')} onChange={(e) => set(fd.key, e.target.value)} disabled={locked} className={inputCls} list={listId} />
             {listId && (
               <datalist id={listId}>
-                {suggestions!.map((s) => <option key={s} value={s} />)}
+                {suggestions!.map((s, i) => <option key={`${i}-${s}`} value={s} />)}
               </datalist>
             )}
           </div>
