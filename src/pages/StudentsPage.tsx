@@ -8,6 +8,8 @@ import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
+import { ColumnPicker } from '../components/ColumnPicker';
+import { useColumnPrefs } from '../lib/columnPrefs';
 
 export interface StudentListItem {
   studentId: number;
@@ -139,7 +141,8 @@ export function StudentsPage() {
   // grid state
   const [sortKey, setSortKey] = useState<SortKey>('studentFullName');
   const [sortAsc, setSortAsc] = useState(true);
-  const [moreCols, setMoreCols] = useState(false);
+  // Per-user column choice, saved in the DB (replaces "More columns").
+  const colPrefs = useColumnPrefs('cols.students');
   const [page, setPage] = useState(0);
   const [inviting, setInviting] = useState<number | null>(null);
 
@@ -207,7 +210,17 @@ export function StudentsPage() {
   const pageRows = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   // Legacy guest grid hides the phone column and the additional-columns set.
   const baseCols = isGuest ? BASE_COLS.filter((c) => c.key !== 'phoneNumber1') : BASE_COLS;
-  const cols = moreCols && !isGuest ? [...baseCols, ...EXTRA_COLS] : baseCols;
+  // Name always shows (it is the link to the student); guests never get the
+  // extra columns (the API blanks those fields for them anyway).
+  const extraCols = isGuest ? [] : EXTRA_COLS;
+  const cols = [
+    ...baseCols.filter((c) => c.key === 'studentFullName' || colPrefs.isShown(c.key, true)),
+    ...extraCols.filter((c) => colPrefs.isShown(c.key, false)),
+  ];
+  const pickerSections = [
+    { title: 'Columns', columns: baseCols.filter((c) => c.key !== 'studentFullName').map((c) => ({ key: c.key, label: c.label, shown: colPrefs.isShown(c.key, true) })) },
+    { title: 'More columns', columns: extraCols.map((c) => ({ key: c.key, label: c.label, shown: colPrefs.isShown(c.key, false) })) },
+  ];
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortAsc((v) => !v);
@@ -270,6 +283,7 @@ export function StudentsPage() {
                 <Plus className="size-3.5" /> Add New
               </button>
             )}
+            <ColumnPicker sections={pickerSections} onToggle={colPrefs.set} onSetMany={colPrefs.setMany} onReset={colPrefs.reset} />
             {user?.canExport && (
               <button
                 onClick={exportCsv}
@@ -334,12 +348,6 @@ export function StudentsPage() {
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="accent-[#1e5c97]" />
           Inactive
         </label>
-        {!isGuest && (
-          <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-            <input type="checkbox" checked={moreCols} onChange={(e) => setMoreCols(e.target.checked)} className="accent-[#1e5c97]" />
-            More columns
-          </label>
-        )}
 
         <button
           type="submit"

@@ -9,6 +9,8 @@ import { DateInput } from './DateInput';
 import { fmtDate } from '../lib/dates';
 import { useAccess } from './AccessProvider';
 import { PageHero } from './PageHero';
+import { ColumnPicker, type PickerSection } from './ColumnPicker';
+import { useColumnPrefs, columnPrefKey } from '../lib/columnPrefs';
 
 // Generic, config-driven list page: filter bar → portal API endpoint that
 // returns name-keyed proc rows → sortable, paginated grid with CSV export.
@@ -228,8 +230,9 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const [error, setError] = useState('');
   const [sortKey, setSortKey] = useState('');
   const [sortAsc, setSortAsc] = useState(true);
-  const [moreCols, setMoreCols] = useState(false);
-  const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({});
+  // Per-user column choice (saved in the DB); replaces "More columns".
+  // Keyed by endpoint (incl. its query, e.g. ?mode=extra) so each list has its own.
+  const colPrefs = useColumnPrefs(columnPrefKey(config.endpoint));
   const [page, setPage] = useState(0);
 
   useEffect(() => {
@@ -331,9 +334,18 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   }, [rows, sortKey, sortAsc]);
 
   const groups = (config.columnGroups ?? []).filter((g) => roleOk(g.roles));
-  const groupVisible = (key?: string) => !key || (groups.some((g) => g.key === key) && !!groupsOn[key]);
-  const cols = config.columns.filter((c) => (!c.extra || moreCols) && groupVisible(c.group));
-  const hasExtra = config.columns.some((c) => c.extra);
+  // Action columns (no label / "_" keys) always show; the rest follow the
+  // user's saved choice, defaulting to: main columns on, "extra" and group
+  // columns off. Group columns only exist for the roles their group allows.
+  const groupAllowed = (c: ColumnDef) => !c.group || groups.some((g) => g.key === c.group);
+  const pickable = (c: ColumnDef) => !!c.label && !c.key.startsWith('_');
+  const defaultShown = (c: ColumnDef) => !c.extra && !c.group;
+  const cols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c))));
+  const pickerSections: PickerSection[] = [
+    { title: 'Columns', columns: config.columns.filter((c) => pickable(c) && !c.extra && !c.group) },
+    { title: 'More columns', columns: config.columns.filter((c) => pickable(c) && c.extra && !c.group) },
+    ...groups.map((g) => ({ title: g.label, columns: config.columns.filter((c) => pickable(c) && c.group === g.key) })),
+  ].map((sec) => ({ title: sec.title, columns: sec.columns.map((c) => ({ key: c.key, label: c.label, shown: colPrefs.isShown(c.key, defaultShown(c)) })) }));
   const showTotal = (c: ColumnDef) => (c.total || !!c.totalBy) && roleOk(c.totalRoles);
   const hasTotals = cols.some(showTotal);
   const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
@@ -390,6 +402,12 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                 <Plus className="size-3.5" /> Add New
               </button>
             )}
+            <ColumnPicker
+              sections={pickerSections}
+              onToggle={colPrefs.set}
+              onSetMany={colPrefs.setMany}
+              onReset={colPrefs.reset}
+            />
             {user?.canExport && (
               <button
                 onClick={exportCsv}
@@ -478,23 +496,6 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             }
           }
         })}
-        {hasExtra && (
-          <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-            <input type="checkbox" checked={moreCols} onChange={(e) => setMoreCols(e.target.checked)} className="accent-[#1e5c97]" />
-            More columns
-          </label>
-        )}
-        {groups.map((g) => (
-          <label key={g.key} className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-            <input
-              type="checkbox"
-              checked={!!groupsOn[g.key]}
-              onChange={(e) => setGroupsOn((cur) => ({ ...cur, [g.key]: e.target.checked }))}
-              className="accent-[#1e5c97]"
-            />
-            {g.label}
-          </label>
-        ))}
         <button type="submit" className="btn-grad ml-auto rounded-lg text-xs font-semibold px-4 py-1.5">
           Search
         </button>
