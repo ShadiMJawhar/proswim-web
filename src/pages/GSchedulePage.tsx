@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, AlertCircle, Search, AlertTriangle, OctagonX, Phone, Cake, StickyNote, MessageSquarePlus } from 'lucide-react';
+import { Loader2, AlertCircle, Search, AlertTriangle, OctagonX, Phone, Cake, StickyNote, MessageSquarePlus, Plus } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
 import { fmtDate as toDMY } from '../lib/dates';
+import { coachStats, scheduleTotals } from '../lib/gscheduleStats';
 import { PageHero } from '../components/PageHero';
+import { useAccess } from '../components/AccessProvider';
+
+// Group Schedule = RegistrationsListView.aspx: timeslot rows × coach columns
+// from P_Registration_SelectView, legacy header counters, per-coach summary,
+// cell colours, and the per-cell / per-student actions (class, attendance,
+// remarks, registration, add payment, phone, birthday).
 
 type Row = Record<string, unknown>;
 
@@ -32,22 +39,29 @@ function cellColor(count: number): string {
 
 const s = (v: unknown) => (v == null ? '' : String(v));
 const n = (v: unknown) => (v == null ? 0 : Number(v));
+const semId = (r: Row) => n(r.SemesterId ?? r.SemesterID);
+const pad2 = (x: number) => String(x).padStart(2, '0');
+const dmyFull = (d: Date) => `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
 
+// Legacy: the DOB moved into this year (AddYears), shown within 6 days of now.
 function isBirthdayNear(dob: unknown): boolean {
   const t = s(dob);
-  if (!t) return false;
+  if (t.length <= 2) return false;
   const d = new Date(t);
   if (isNaN(d.getTime())) return false;
   const now = new Date();
-  const thisYear = new Date(now.getFullYear(), d.getMonth(), d.getDate());
-  const diff = Math.abs((thisYear.getTime() - now.getTime()) / 86400000);
-  return diff <= 6 || Math.abs(diff - 365) <= 6;
+  const thisYear = new Date(now.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
+  return Math.abs((now.getTime() - thisYear.getTime()) / 86400000) <= 6;
 }
+
+// Legacy coach-name cleanup in the cells ("A-Name" → "Name").
+const coachShort = (c: string) => c.replace(/[A-F]-/g, '');
 
 export function GSchedulePage() {
   const user = getStoredUser();
   const userType = (user?.userType || '').toLowerCase();
   const locationLocked = (userType === 'user' || userType === 'guest') && !!user?.primaryLocationId;
+  const access = useAccess();
 
   const [locations, setLocations] = useState<{ locationId: number; locationNickName: string | null }[]>([]);
   // Everyone opens scoped to their own location; only locked types can't change it.
@@ -60,15 +74,22 @@ export function GSchedulePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Legacy _AccessReadOnly: guests always, a "user" looking at another location.
+  // (A superuser's session location follows the picker, so it never applies.)
+  const readOnly = userType === 'guest' || (userType === 'user' && locationId !== (user?.primaryLocationId ?? 0));
+  const canAct = !readOnly && user?.canSave !== false;
+  const canAddNew = canAct && access.canEdit('/registrations');
+
   useEffect(() => {
     apiRequest<{ locations: { locationId: number; locationNickName: string | null }[] }>(
       '/api/portal/students/lookups'
     ).then((lk) => setLocations(lk.locations)).catch(() => {});
   }, []);
 
-  // Location → semester list (+ current semester as default). On the first run
-  // keep a semester restored from the URL (coming back from a detail page)
-  // instead of snapping to the current one; later location changes re-default.
+  // Location → semester list (Semester_Select_ByLocation) defaulting to the
+  // legacy Semester_Select_Current(location).Rows[0]: the first current semester
+  // in proc order. On the first run keep a semester restored from the URL
+  // (coming back from a detail page); later location changes re-default.
   const restoredSemester = useRef(semesterId);
   useEffect(() => {
     apiRequest<{ semesters: Row[]; currentSemesterId: number }>(
@@ -76,10 +97,11 @@ export function GSchedulePage() {
     )
       .then((r) => {
         setSemesters(r.semesters);
-        const semId = (s: Row) => n(s.SemesterId ?? s.SemesterID);
         const keep = restoredSemester.current;
         restoredSemester.current = 0;
-        if (keep && r.semesters.some((s) => semId(s) === keep)) setSemesterId(keep);
+        const firstCurrent = locationId ? r.semesters.find((x) => x.SemesterCurrent === true) : undefined;
+        if (keep && r.semesters.some((x) => semId(x) === keep)) setSemesterId(keep);
+        else if (firstCurrent) setSemesterId(semId(firstCurrent));
         else if (r.currentSemesterId) setSemesterId(r.currentSemesterId);
         else if (r.semesters.length) setSemesterId(semId(r.semesters[0]));
       })
@@ -139,26 +161,13 @@ export function GSchedulePage() {
     );
   }
 
-  function coachSummary(coach: string) {
-    const rows = (data?.rows ?? []).filter((r) => s(r.CoachName) === coach);
-    const classIds = new Set(rows.filter((r) => n(r.ClassId) > 0).map((r) => n(r.ClassId)));
-    const students = rows.filter((r) => s(r.StudentName).length > 2).length;
-    const spc = data?.studentsPerClass || COLOR_CAP;
-    const places = spc * classIds.size;
-    let avail = places - students;
-    // Legacy adds back over-capacity slots so avail never goes negative per slot.
-    const slots = new Map<string, number>();
-    for (const r of rows) {
-      if (s(r.StudentName).length <= 2) continue;
-      const k = `${s(r.dayid)}|${s(r.ClassTime)}`;
-      slots.set(k, (slots.get(k) || 0) + 1);
-    }
-    for (const cnt of slots.values()) if (cnt >= spc + 1) avail += cnt - spc;
-    const pct = places > 0 ? Math.round((100 * (places - avail)) / places) : 0;
-    return { classes: classIds.size, students, places, avail, pct };
-  }
+  // Legacy per-coach summary + totals (SemesterStudentsPerClass from result set 4).
+  const spc = data?.studentsPerClass || COLOR_CAP;
+  const coachSummary = (coach: string) => coachStats(data?.rows ?? [], coach, spc, data?.timeslots ?? []);
+  const totals = scheduleTotals(data?.rows ?? [], coachNames, spc, data?.timeslots ?? []);
 
-  // Semester weeks remark
+  // Legacy ltrRemark: "[w of W Weeks] [dd/MM/yyyy to dd/MM/yyyy]" while the
+  // semester runs, else "W Weeks [dd/MM/yyyy to dd/MM/yyyy]".
   function weeksRemark(): string {
     const sem = data?.semester;
     if (!sem) return '';
@@ -167,17 +176,22 @@ export function GSchedulePage() {
     const weeks = n(sem.SemesterNumberOfWeeks);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) return '';
     const now = new Date();
-    let head = `${weeks} Weeks`;
-    if (now >= start && now <= end) {
-      const cur = Math.floor(((now.getTime() - start.getTime()) / 86400000 + 6) / 7);
-      head = `Week ${cur} of ${weeks}`;
+    let head = `${weeks} Weeks `;
+    if (now > start && now < end) {
+      const days = Math.floor((now.getTime() - start.getTime()) / 86400000);
+      head = `[${Math.trunc((days + 6) / 7)} of ${weeks} Weeks]`;
     }
-    return `${head} · ${toDMY(start)} → ${toDMY(end)}`;
+    return `${head} [${dmyFull(start)} to ${dmyFull(end)}]`;
   }
 
-  const distinctClasses = new Set(
-    (data?.rows ?? []).filter((r) => n(r.ClassId) > 0).map((r) => n(r.ClassId))
-  ).size;
+  const counts = data?.counts;
+  const classLink = (classId: number) => `/classes/${classId}`;
+  const sessionsLink = (classId: number) => `/sessions?${new URLSearchParams({
+    classId: String(classId), semesterId: String(semesterId), locationId: String(locationId), date: '',
+  })}`;
+  const payLink = (r: Row) => `/payments/new?${new URLSearchParams({
+    studentId: String(n(r.studentid)), studentName: s(r.StudentName), semesterId: String(semesterId),
+  })}`;
 
   const selectCls =
     'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
@@ -190,15 +204,31 @@ export function GSchedulePage() {
         subtitle={weeksRemark() || 'Group schedule by coach and time slot'}
         slide={3}
         right={
-          data ? (
-            <div className="text-xs font-semibold bg-slate-100 border border-slate-200 text-[#1e5c97] rounded-lg px-3 py-1.5">
-              [{distinctClasses} Classes] [
-              <span className="text-emerald-600">{data.counts.active} Active</span>
-              {' + '}
-              <span className="text-red-500">{data.counts.stopped} Stopped</span>
-              {' = '}{data.counts.active + data.counts.stopped} Regs]
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {/* Legacy LblResultCounts */}
+            {data && counts && (
+              <div className="text-xs font-semibold bg-slate-100 border border-slate-200 text-[#1e5c97] rounded-lg px-3 py-1.5 flex flex-wrap gap-x-2">
+                {totals.classes > 0 && <span>[{totals.classes} Classes]</span>}
+                {counts.active > 0 && counts.stopped > 0 && (
+                  <span>
+                    [ <span className="text-emerald-600">{counts.active} Active</span>
+                    {' + '}<span className="text-red-500">{counts.stopped} Stopped</span>
+                    {' = '}{counts.active + counts.stopped} Regs ]
+                  </span>
+                )}
+                {counts.active > 0 && counts.stopped === 0 && <span>[ {counts.active} Registrations]</span>}
+                {counts.sumTimes > 0 && <span>[{counts.sumTimes} Places]</span>}
+                {totals.avail > 0 && <span>[{totals.avail} Avb Places]</span>}
+                {totals.avail > 0 && <span>[{totals.pct} %]</span>}
+              </div>
+            )}
+            {/* Legacy BtnAddNew (disabled when read-only) */}
+            {canAddNew && (
+              <Link to="/registrations/new" className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5">
+                <Plus className="size-3.5" /> Add New
+              </Link>
+            )}
+          </div>
         }
       />
 
@@ -230,7 +260,7 @@ export function GSchedulePage() {
         <select value={semesterId} onChange={(e) => setSemesterId(Number(e.target.value))} className={`${selectCls} min-w-44`}>
           {semesters.length === 0 && <option value={0}>No semesters found</option>}
           {semesters.map((sm) => {
-            const id = n(sm.SemesterId ?? sm.SemesterID);
+            const id = semId(sm);
             return <option key={id} value={id}>{s(sm.SemesterName)}</option>;
           })}
         </select>
@@ -266,19 +296,23 @@ export function GSchedulePage() {
               {/* Coach band, same chrome as the Private Schedule coach rows */}
               <tr>
                 <th className="sticky left-0 z-10 bg-[#aabacf] p-1.5 text-center font-semibold w-[90px] min-w-[90px] text-slate-800">
-                  Time
+                  Smry
                 </th>
                 {coachNames.map((coach) => {
                   const sum = coachSummary(coach);
                   return (
                     <th key={coach} className="bg-[#dce7f4] p-2 w-[200px] min-w-[200px] align-top text-left">
-                      <span className="text-sm font-bold text-slate-800">{coach}</span>{' '}
-                      <span className="text-[#1e5c97] font-bold">{sum.pct}%</span>
-                      <div className="mt-0.5 text-[10px] font-normal text-slate-500">
-                        [{sum.classes} Classes] [{sum.students} Students]
-                        <br />
-                        [{sum.avail} of {sum.places} Places Free]
-                      </div>
+                      {sum.classes > 0 && (
+                        <>
+                          <span className="text-sm font-bold text-slate-800">{coach}</span>{' '}
+                          <span className="text-[#1e5c97] font-bold">{sum.pct}%</span>
+                          <div className="mt-0.5 text-[10px] font-normal text-slate-500">
+                            {sum.classes} Classes - {sum.avail} Av. Places -
+                            <br />
+                            {sum.students} Students - {sum.places} Places
+                          </div>
+                        </>
+                      )}
                     </th>
                   );
                 })}
@@ -293,8 +327,9 @@ export function GSchedulePage() {
                   {coachNames.map((coach) => {
                     const rows = cellRows(ts.dayid, ts.ClassTime, coach);
                     const students = rows.filter((r) => s(r.StudentName).length > 2);
-                    const hasClass = rows.some((r) => n(r.ClassId) > 0);
-                    const closed = rows.length > 0 && !hasClass;
+                    const classRow = rows.find((r) => n(r.ClassId) > 0);
+                    const classId = n(classRow?.ClassId);
+                    const closed = rows.length > 0 && !classRow;
                     const level = rows.length ? s(rows[0].LevelName) : '';
                     const classRemark = rows.length ? s(rows[0].ClassRemark) : '';
                     return (
@@ -305,13 +340,28 @@ export function GSchedulePage() {
                             style={{ backgroundColor: closed ? '#f1f5f9' : cellColor(students.length) }}
                           >
                             <div className={`flex items-center gap-1 flex-wrap ${closed ? 'line-through text-slate-400' : ''}`}>
-                              {level && <span className="text-[#1e5c97] font-bold text-[12px]">{level}</span>}
-                              <span className="font-bold">[{students.length}]</span>
-                              {hasClass && userType !== 'guest' && (
+                              <span className="font-bold underline text-[11px] text-slate-700">{coachShort(coach)}</span>
+                              {/* [Level] → the class record (legacy OpenWindowForClass) */}
+                              {level && (canAct && classId
+                                ? <Link to={classLink(classId)} className="text-[#dd22aa] font-bold text-[12px] hover:underline">[{level}]</Link>
+                                : <span className="text-[#1e5c97] font-bold text-[12px]">[{level}]</span>)}
+                              {/* [count] → the class's sessions/attendance (empty cell: the class) */}
+                              {canAct && classId
+                                ? (
+                                  <Link
+                                    to={students.length > 0 ? sessionsLink(classId) : classLink(classId)}
+                                    className="font-bold text-red-600 hover:underline"
+                                    title={students.length > 0 ? 'Class attendance' : 'Open class'}
+                                  >
+                                    [{students.length}]
+                                  </Link>
+                                )
+                                : <span className="font-bold text-red-600">[{students.length}]</span>}
+                              {classId > 0 && canAct && (
                                 <button type="button"
                                   onClick={() => setRemarkModal({
                                     type: 'Class',
-                                    id: n(rows.find((r) => n(r.ClassId) > 0)?.ClassId),
+                                    id: classId,
                                     name: `${coach} · ${s(ts.ClassDay)} ${s(ts.ClassTime)}`,
                                     value: classRemark,
                                   })}
@@ -321,67 +371,79 @@ export function GSchedulePage() {
                                     : <MessageSquarePlus className="size-3.5 text-slate-400 hover:text-amber-600" />}
                                 </button>
                               )}
-                              {!hasClass && classRemark && (
+                              {(!canAct || !classId) && classRemark && (
                                 <span title={classRemark}><StickyNote className="size-3.5 text-amber-600" /></span>
                               )}
-                              {students.length === 6 && <AlertTriangle className="size-3.5 text-amber-500" />}
-                              {students.length > 6 && <OctagonX className="size-3.5 text-red-600" />}
+                              {students.length === 6 && <span title="6 Students, Watch out"><AlertTriangle className="size-3.5 text-amber-500" /></span>}
+                              {students.length > 6 && <span title="TOO MUCH STUDENTS"><OctagonX className="size-3.5 text-red-600" /></span>}
                               {closed && <span className="text-[10px] font-semibold text-slate-400 no-underline">CLOSED</span>}
                             </div>
                             <div className="mt-1 space-y-0.5">
-                              {students.map((r, k) => (
-                                <div key={k} className="flex items-center gap-1 whitespace-nowrap">
-                                  <span
-                                    title={n(r.DuePercent) > 0 ? `Due ${n(r.DuePercent)}%` : 'Paid'}
-                                    className={`inline-block w-2 h-2 rounded-full border shrink-0 ${
-                                      n(r.DuePercent) > 0
-                                        ? 'bg-red-500 border-red-700'
-                                        : 'bg-emerald-500 border-emerald-700'
-                                    }`}
-                                  />
-                                  {/* Name -> the registration record */}
-                                  <Link
-                                    to={`/registrations/${n(r.RegistrationId)}`}
-                                    className="truncate max-w-[120px] hover:underline hover:text-[#1e5c97]"
-                                    title="Open registration"
-                                  >
-                                    {s(r.StudentName)}
-                                  </Link>
-                                  {/* Due -> in-app payment form, prefilled for this student */}
-                                  {n(r.DuePercent) > 0 && (
-                                    <Link
-                                      to={`/payments/new?studentId=${n(r.studentid)}&semesterId=${semesterId}&studentName=${encodeURIComponent(s(r.StudentName))}`}
-                                      title={`Add payment${r.DueAmount != null ? `, due ${s(r.DueAmount)}` : ''}`}
-                                      className="text-red-600 font-semibold hover:underline"
-                                    >
-                                      Due {n(r.DuePercent)}%
-                                    </Link>
-                                  )}
-                                  {s(r.Contact) && (
-                                    <button type="button" onClick={() => togglePhone(`${n(r.studentid)}`)} title="Show phone">
-                                      <Phone className="size-3 text-slate-500 hover:text-[#1e5c97]" />
-                                    </button>
-                                  )}
-                                  {s(r.Contact) && shownPhones.has(`${n(r.studentid)}`) && (
-                                    <span className="text-[10px] font-semibold text-[#1e5c97] bg-[#e8f0f8] rounded px-1">
-                                      {s(r.Contact).replace(/,/g, ' ')}
-                                    </span>
-                                  )}
-                                  {isBirthdayNear(r.DOB) && (
-                                    <span title={toDMY(r.DOB)}>
-                                      <Cake className="size-3 text-pink-500" />
-                                    </span>
-                                  )}
-                                  {/* Remark: view + edit (empty state shows an add icon) */}
-                                  <button type="button"
-                                    onClick={() => setRemarkModal({ type: 'Student', id: n(r.studentid), name: s(r.StudentName), value: s(r.StudentRemark) })}
-                                    title={s(r.StudentRemark) || 'Add remark'}>
-                                    {s(r.StudentRemark)
-                                      ? <StickyNote className="size-3 text-amber-600" />
-                                      : <MessageSquarePlus className="size-3 text-slate-300 hover:text-amber-600" />}
-                                  </button>
-                                </div>
-                              ))}
+                              {students.map((r, k) => {
+                                const due = n(r.DuePercent);
+                                const phoneKey = `${i}_${coach}_${k}`;
+                                return (
+                                  <div key={k} className="flex items-center gap-1 whitespace-nowrap">
+                                    <span
+                                      title={due > 0 ? `Due ${due}%` : 'Paid'}
+                                      className={`inline-block w-2 h-2 rounded-full border shrink-0 ${
+                                        due > 0 ? 'bg-red-500 border-red-700' : 'bg-emerald-500 border-emerald-700'
+                                      }`}
+                                    />
+                                    {/* Name → the registration record */}
+                                    {canAct ? (
+                                      <Link
+                                        to={`/registrations/${n(r.RegistrationId)}`}
+                                        className="truncate max-w-[120px] hover:underline hover:text-[#1e5c97]"
+                                        title="Open registration"
+                                      >
+                                        {s(r.StudentName)}
+                                      </Link>
+                                    ) : (
+                                      <span className="truncate max-w-[120px]">{s(r.StudentName)}</span>
+                                    )}
+                                    {/* "D: %x" when due, "$" when paid → in-app payment form */}
+                                    {canAct ? (
+                                      <Link
+                                        to={payLink(r)}
+                                        title={`Add payment${r.DueAmount != null ? `, due ${s(r.DueAmount)}` : ''}`}
+                                        className={`font-semibold hover:underline ${due > 0 ? 'text-red-600' : 'text-emerald-700'}`}
+                                      >
+                                        {due > 0 ? `D: %${Math.trunc(due)}` : '$'}
+                                      </Link>
+                                    ) : (
+                                      <span className={`font-semibold ${due > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                                        {due > 0 ? `D: %${Math.trunc(due)}` : '$'}
+                                      </span>
+                                    )}
+                                    {canAct && (
+                                      <button type="button" onClick={() => togglePhone(phoneKey)} title="Show phone">
+                                        <Phone className="size-3 text-slate-500 hover:text-[#1e5c97]" />
+                                      </button>
+                                    )}
+                                    {canAct && shownPhones.has(phoneKey) && (
+                                      <span className="text-[10px] font-semibold text-[#1e5c97] bg-[#e8f0f8] rounded px-1">
+                                        {s(r.Contact).replace(/,/g, '')}
+                                      </span>
+                                    )}
+                                    {isBirthdayNear(r.DOB) && (
+                                      <span title={toDMY(r.DOB)}>
+                                        <Cake className="size-3 text-pink-500" />
+                                      </span>
+                                    )}
+                                    {/* Remark: view + edit (empty state shows an add icon) */}
+                                    {canAct && (
+                                      <button type="button"
+                                        onClick={() => setRemarkModal({ type: 'Student', id: n(r.studentid), name: s(r.StudentName), value: s(r.StudentRemark) })}
+                                        title={s(r.StudentRemark) || 'Add remark'}>
+                                        {s(r.StudentRemark).length > 1
+                                          ? <StickyNote className="size-3 text-amber-600" />
+                                          : <MessageSquarePlus className="size-3 text-slate-300 hover:text-amber-600" />}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -408,16 +470,17 @@ export function GSchedulePage() {
       {/* Legend, same pattern as the Private Schedule */}
       <div className="mt-4 flex flex-wrap gap-3 text-[11px] text-slate-500">
         <LegendSwatch color="#ffffff" label="Empty" />
-        <LegendSwatch color="#e5eeff" label="2 students" />
+        <LegendSwatch color="#e9e9f5" label="1 student" />
+        <LegendSwatch color="#e5eeff" label="2" />
         <LegendSwatch color="#ccddff" label="3" />
         <LegendSwatch color="#b3ccff" label="4" />
         <LegendSwatch color="#99bbff" label="5 (full)" />
         <LegendSwatch color="#80a9ff" label="Over capacity" />
         <span className="flex items-center gap-1">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 border border-emerald-700" /> paid
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 border border-emerald-700" /> paid ($)
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-2 h-2 rounded-full bg-red-500 border border-red-700" /> payment due
+          <span className="inline-block w-2 h-2 rounded-full bg-red-500 border border-red-700" /> payment due (D: %)
         </span>
         <span className="flex items-center gap-1"><AlertTriangle className="size-3 text-amber-500" /> 6 students</span>
         <span className="flex items-center gap-1"><OctagonX className="size-3 text-red-600" /> over 6</span>

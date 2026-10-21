@@ -2,8 +2,9 @@
 // RptAttendanceDetails.aspx in the portal UI.
 //
 // Faithful legacy behaviours kept on purpose:
-// - The summary does NOT auto-load; you press Search (the legacy page shipped
-//   with LoadData() commented out of every cascade). The details page DOES
+// - The summary does NOT load on open; you press Search (the legacy cascades
+//   never call LoadData). Day / Class / Status / Active / Stopped changes do
+//   reload it, as their legacy postbacks did. The details page DOES
 //   auto-load, exactly like the original.
 // - Header stats use the legacy integer-truncated percentages against
 //   Sum(Total); when Sum(Total) is 0 the percentage segments disappear.
@@ -241,6 +242,15 @@ export function AttendanceSummaryPage() {
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load the report.'))
       .finally(() => setLoading(false));
   }
+
+  // Legacy postbacks that DO run LoadData: Day, Class and Status changes and
+  // the Active / Stopped checkboxes (the location/semester/coach cascades and
+  // the dates don't). Skipped on mount, the report still opens empty.
+  const filtersMounted = useRef(false);
+  useEffect(() => {
+    if (!filtersMounted.current) { filtersMounted.current = true; return; }
+    if (semesterId) load();
+  }, [day, classId, status, showActive, showStopped]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Header stats, legacy format with integer-truncated percentages.
   const stats = useMemo(() => {

@@ -1,5 +1,6 @@
 import { RecordFormPage, type RecordFormConfig } from '../components/RecordFormPage';
 import { getStoredUser } from '../api/portalApi';
+import { CLASS_PERIODS, CLASS_TIMES, coachesOfFormLocation, isoToday, semestersOfFormLocation } from '../lib/groupClasses';
 
 const LOOKUPS = '/api/portal/modules/lookups';
 
@@ -12,6 +13,18 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => ({ val
 
 // ── Semester ─────────────────────────────────────────────────────────────────
 
+// Mirrors SemestersIndividual.aspx: same fields/labels, defaults (Stds/Class
+// Limit 5, kit and prices 0, currency LBP, no flag ticked, blank stop which the
+// proc stores as NULL), validators (name + "# Of Weeks" required, dates
+// required, amounts whole numbers ≥ 0). Location = the list's / user's own,
+// locked for 'user'. On edit the currency is fixed, and Current / Upcoming
+// can't be unticked once set (legacy chk*.Enabled=false). "Exclusive Current"
+// is the legacy radio pair: ticked = clear the location's other currents.
+const SEMESTER_AMOUNTS = [
+  'SemesterNumberOfWeeks', 'SemesterStudentsPerClass', 'SemesterAmountKit', 'SemesterAmountOne', 'SemesterAmountTwo',
+  'SemesterAmountThree', 'SemesterAmountFour', 'SemesterAmountFive', 'SemesterAmountSix', 'SemesterAmountSeven',
+];
+
 const semester: RecordFormConfig = {
   title: 'Semester',
   listPath: '/semesters',
@@ -21,50 +34,64 @@ const semester: RecordFormConfig = {
   lookups: LOOKUPS,
   heroSlide: 3,
   createDefaults: {
-    SemesterCurrency: 'USD',
-    SemesterNumberOfWeeks: 16,
+    SemesterCurrency: 'LBP',
     SemesterStudentsPerClass: 5,
+    SemesterAmountKit: 0,
+    SemesterAmountOne: 0, SemesterAmountTwo: 0, SemesterAmountThree: 0, SemesterAmountFour: 0,
+    SemesterAmountFive: 0, SemesterAmountSix: 0, SemesterAmountSeven: 0,
     SemesterDeleted: false,
     SemesterCurrent: false,
-    SemesterUpcoming: true,
+    SemesterUpcoming: false,
     Exclusivecurrent: false,
-    SemesterStop: '1900-01-01',
+  },
+  validate: (f) => {
+    if (!String(f.SemesterName ?? '').trim()) return 'Semester Name is required.';
+    if (f.SemesterNumberOfWeeks === '' || f.SemesterNumberOfWeeks == null) return '# Of Weeks is required.';
+    if (!f.SemesterStart) return 'Semester Start is required.';
+    if (!f.SemesterEnd) return 'Semester End is required.';
+    for (const k of SEMESTER_AMOUNTS) {
+      const v = f[k];
+      if (v !== '' && v != null && !(Number.isInteger(Number(v)) && Number(v) >= 0)) return 'Amounts must be whole numbers (Number).';
+    }
+    return null;
   },
   sections: [
     {
       title: 'Semester',
       fields: [
-        { key: 'SemesterName', label: 'Name', type: 'text' },
-        { key: 'SemesterPrimaryLocationId', label: 'Location', type: 'select', optionsKey: 'locations' },
-        { key: 'SemesterStart', label: 'Start date', type: 'date' },
-        { key: 'SemesterEnd', label: 'End date', type: 'date' },
-        { key: 'SemesterStop', label: 'Stop date', type: 'date' },
-        { key: 'SemesterNumberOfWeeks', label: 'Number of weeks', type: 'number' },
-        { key: 'SemesterStudentsPerClass', label: 'Students per class', type: 'number' },
-        { key: 'SemesterDescription', label: 'Description', type: 'textarea' },
+        { key: 'SemesterName', label: 'Semester Name', type: 'text' },
+        { key: 'SemesterStart', label: 'Semester Start', type: 'date' },
+        { key: 'SemesterEnd', label: 'Semester End', type: 'date' },
+        { key: 'SemesterStop', label: 'Semester Stop', type: 'date' },
+        { key: 'SemesterNumberOfWeeks', label: '# Of Weeks', type: 'number' },
+        { key: 'SemesterPrimaryLocationId', label: 'Primary Location', type: 'select', optionsKey: 'locations',
+          urlParam: 'locationId', defaultToUserLocation: true, lockedFor: ['user'] },
+        { key: 'SemesterStudentsPerClass', label: 'Stds / Class Limit', type: 'number' },
+        { key: 'SemesterAmountKit', label: 'Swimming Kit', type: 'number' },
       ],
     },
     {
       title: 'Pricing',
       fields: [
-        { key: 'SemesterCurrency', label: 'Currency', type: 'select', options: CURRENCY },
-        { key: 'SemesterAmountKit', label: 'Kit amount', type: 'number' },
-        { key: 'SemesterAmountOne', label: '1× / week', type: 'number' },
-        { key: 'SemesterAmountTwo', label: '2× / week', type: 'number' },
-        { key: 'SemesterAmountThree', label: '3× / week', type: 'number' },
-        { key: 'SemesterAmountFour', label: '4× / week', type: 'number' },
-        { key: 'SemesterAmountFive', label: '5× / week', type: 'number' },
-        { key: 'SemesterAmountSix', label: '6× / week', type: 'number' },
-        { key: 'SemesterAmountSeven', label: '7× / week', type: 'number' },
+        { key: 'SemesterCurrency', label: 'Currency', type: 'select', readOnlyOnEdit: true,
+          options: [{ value: 'LBP', label: 'LBP' }, { value: 'USD', label: 'USD' }] },
+        { key: 'SemesterAmountOne', label: 'Price For One', type: 'number' },
+        { key: 'SemesterAmountTwo', label: 'Price For Two', type: 'number' },
+        { key: 'SemesterAmountThree', label: 'Price For Three', type: 'number' },
+        { key: 'SemesterAmountFour', label: 'Price For Four', type: 'number' },
+        { key: 'SemesterAmountFive', label: 'Price For Five', type: 'number' },
+        { key: 'SemesterAmountSix', label: 'Price For Six', type: 'number' },
+        { key: 'SemesterAmountSeven', label: 'Price For Seven', type: 'number' },
+        { key: 'SemesterDescription', label: 'Description', type: 'textarea' },
       ],
     },
     {
       title: 'Flags',
       fields: [
-        { key: 'SemesterCurrent', label: 'Current', type: 'checkbox' },
-        { key: 'SemesterUpcoming', label: 'Upcoming', type: 'checkbox' },
-        { key: 'Exclusivecurrent', label: 'Exclusive current', type: 'checkbox' },
         { key: 'SemesterDeleted', label: 'Deleted', type: 'checkbox' },
+        { key: 'SemesterCurrent', label: 'Current', type: 'checkbox', lockedWhen: (r) => r?.SemesterCurrent === true },
+        { key: 'SemesterUpcoming', label: 'Upcoming', type: 'checkbox', lockedWhen: (r) => r?.SemesterUpcoming === true },
+        { key: 'Exclusivecurrent', label: 'Exclusive Current (untick other currents)', type: 'checkbox' },
       ],
     },
   ],
@@ -154,37 +181,50 @@ const coach: RecordFormConfig = {
 
 // ── Class ────────────────────────────────────────────────────────────────────
 
+// Mirrors ClassIndividual.aspx. Location → semesters + coaches cascade (legacy
+// ddlLocations_SelectedIndexChanged rebinds both without "Not Selected", so the
+// first entry is picked: the newest semester, the first active coach). Time is
+// the legacy 04:30–22:45 quarter-hour list (default 15:30), Period 0.5–2.5 Hrs
+// (default 1), remarks obligatory when absent ticked by default. The server
+// refuses a duplicate (same semester, coach, day and time): "Class Already Exists".
 const klass: RecordFormConfig = {
   title: 'Class',
   listPath: '/classes',
   slug: 'class',
   idKey: 'ClassId',
-  titleKey: 'ClassDay',
+  titleKey: 'ClassName',
   lookups: LOOKUPS,
   heroSlide: 2,
   createDefaults: {
+    ClassLevelId: 0,
+    ClassDay: 'Mon',
+    ClassTimeFrom: '15:30',
+    ClassPeriod: '1',
+    ClassRemarks: '',
     ClassDeleted: false,
-    ClassObligatoryRemarksWhenAbsent: false,
-    ClassPeriod: '',
+    ClassObligatoryRemarksWhenAbsent: true,
   },
   sections: [
     {
       title: 'Class',
       fields: [
-        { key: 'ClassLocationId', label: 'Location', type: 'select', optionsKey: 'locations' },
-        { key: 'ClassSemesterId', label: 'Semester', type: 'select', optionsKey: 'semesters' },
-        { key: 'CoachId', label: 'Coach', type: 'select', optionsKey: 'coaches' },
+        { key: 'ClassLocationId', label: 'Location', type: 'select', optionsKey: 'locations',
+          urlParam: 'locationId', defaultToUserLocation: true, lockedFor: ['user'] },
+        { key: 'ClassSemesterId', label: 'Semester', type: 'select', labelKey: 'semestername',
+          optionsFrom: semestersOfFormLocation('ClassLocationId') },
         { key: 'ClassLevelId', label: 'Level', type: 'select', optionsKey: 'levels' },
+        { key: 'CoachId', label: 'Coach', type: 'select', labelKey: 'CoachFullName',
+          optionsFrom: coachesOfFormLocation('ClassLocationId') },
         { key: 'ClassDay', label: 'Day', type: 'select', options: DAYS },
-        { key: 'ClassTimeFrom', label: 'Time (e.g. 17:30)', type: 'text' },
-        { key: 'ClassPeriod', label: 'Period', type: 'text' },
+        { key: 'ClassTimeFrom', label: 'Time', type: 'select', options: CLASS_TIMES },
+        { key: 'ClassPeriod', label: 'Period', hint: 'Hrs', type: 'select', options: CLASS_PERIODS },
         { key: 'ClassRemarks', label: 'Remarks', type: 'textarea' },
       ],
     },
     {
       title: 'Flags',
       fields: [
-        { key: 'ClassObligatoryRemarksWhenAbsent', label: 'Require remark when absent', type: 'checkbox' },
+        { key: 'ClassObligatoryRemarksWhenAbsent', label: 'Obligatory Remarks When Absent', type: 'checkbox' },
         { key: 'ClassDeleted', label: 'Deleted', type: 'checkbox' },
       ],
     },
@@ -421,7 +461,7 @@ const packType: RecordFormConfig = {
       fields: [
         // Location: defaults to ?locationId= from the list (else the user's own
         // location), locked for 'user' accounts, immutable once created.
-        { key: 'PrivatePackageLocationId', label: 'Location', type: 'select', optionsKey: 'locations',
+        { key: 'PrivatePackageLocationId', label: 'Primary Location', type: 'select', optionsKey: 'locations',
           urlParam: 'locationId', defaultToUserLocation: true, lockedFor: ['user'], readOnlyOnEdit: true },
         { key: 'PrivatePackageName', label: 'Package Name', type: 'text' },
         { key: 'PrivatePackageCurrency', label: 'Currency', hint: 'fixed after create', type: 'select', readOnlyOnEdit: true, options: [
@@ -656,23 +696,32 @@ const mainExpense: RecordFormConfig = {
 
 // ── Group session (ClassesSessionsIndividual.aspx) ───────────────────────────
 
+// Mirrors ClassesSessionsIndividual.aspx: Date (today) drives the Class list,
+// the classes of the user's own location, current semester, on that weekday
+// ("Coach - Day - Time"). Class is fixed once created (the update proc ignores
+// it). The server refuses a second session of the same class on the same
+// date: "Session For This Class and Date Already Exists".
 const session: RecordFormConfig = {
   title: 'Session',
   listPath: '/sessions',
   slug: 'session',
   idKey: 'SessionId',
   titleKey: 'ClassName',
-  lookups: '/api/portal/modules/lookups',
   heroSlide: 2,
-  createDefaults: {
+  createDefaults: () => ({
+    SessionDate: isoToday(),
     SessionStatus: 'Active',
-  },
+    SessionRemarks: '',
+  }),
+  validate: (f) => (!f.SessionDate ? 'Date is required (dd/mm/yyyy).'
+    : !Number(f.SessionClassId) ? 'Pick a class.' : null),
   sections: [
     {
       title: 'Session',
       fields: [
-        { key: 'SessionClassId', label: 'Class', type: 'select', optionsKey: 'classes' },
         { key: 'SessionDate', label: 'Date', type: 'date' },
+        { key: 'SessionClassId', label: 'Class', type: 'select', readOnlyOnEdit: true, labelKey: 'ClassName',
+          optionsFrom: { url: (f) => (f.SessionDate ? `/api/portal/edit/session-classes?date=${String(f.SessionDate)}` : null) } },
         { key: 'SessionStatus', label: 'Status', type: 'select', options: [
           'Active', 'Cancelled', 'Make-Up',
         ].map((v) => ({ value: v, label: v })) },
@@ -682,52 +731,10 @@ const session: RecordFormConfig = {
   ],
 };
 
-// ── Extra class / membership (ExtraClasssIndividual.aspx) ────────────────────
-
-const extraClass: RecordFormConfig = {
-  title: 'Extra Class',
-  listPath: '/extra-classes',
-  slug: 'extra-class',
-  idKey: 'ExtraClassId',
-  titleKey: 'StudentFullname',
-  lookups: '/api/portal/modules/lookups',
-  heroSlide: 1,
-  createDefaults: {
-    ExtraClassCurrency: 'LBP',
-    ExtraClassType: 'AquaBaby',
-    ExtraClassStatus: 'Active',
-    ExtraClassNumberOfSessions: 10,
-    ExtraClassValidityMonths: 3,
-    ExtraClassDeleted: false,
-  },
-  sections: [
-    {
-      title: 'Extra Class',
-      fields: [
-        { key: 'ExtraClassStudentID', label: 'Student', type: 'student', labelKey: 'StudentFullname' },
-        { key: 'ExtraClassLocationId', label: 'Location', type: 'select', optionsKey: 'locations' },
-        { key: 'ExtraClassType', label: 'Type', type: 'select', options: [
-          'AquaBaby', 'AquaGym', 'AquaMermaid', 'MemberShip', 'MemberShipPasses', 'Others',
-        ].map((v) => ({ value: v, label: v })) },
-        { key: 'ExtraClassStartDate', label: 'Start date', type: 'date' },
-        { key: 'ExtraClassNumberOfSessions', label: 'Sessions', type: 'number' },
-        { key: 'ExtraClassValidityMonths', label: 'Validity (months)', type: 'number' },
-        { key: 'ExtraClassCurrency', label: 'Currency (fixed after create)', type: 'select', options: [
-          { value: 'LBP', label: 'LBP' }, { value: 'USD', label: 'USD' },
-        ] },
-        { key: 'ExtraClassCost', label: 'Cost', type: 'number' },
-        { key: 'ExtraClassStatus', label: 'Status', type: 'select', options: [
-          'Active', 'Cancelled', 'Closed', 'ClosedNeedPayment', 'Freeze', 'MovedtoGroup',
-        ].map((v) => ({ value: v, label: v })) },
-        { key: 'ExtraClassDescription', label: 'Description', type: 'textarea' },
-        { key: 'ExtraClassDeleted', label: 'Deleted', type: 'checkbox' },
-      ],
-    },
-  ],
-};
+// Extra class / membership (ExtraClasssIndividual.aspx) is the bespoke
+// ExtraClassForm.tsx (sessions grid, generate, renew).
 
 export const SessionForm = () => <RecordFormPage config={session} />;
-export const ExtraClassForm = () => <RecordFormPage config={extraClass} />;
 export const SemesterForm = () => <RecordFormPage config={semester} />;
 export const CoachForm = () => <RecordFormPage config={coach} />;
 export const ClassForm = () => <RecordFormPage config={klass} />;

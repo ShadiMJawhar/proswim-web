@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Save, Search } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
@@ -33,6 +33,19 @@ export interface FormField {
   urlParam?: string;
   /** On create, default to the signed-in user's primary location (a URL param wins). */
   defaultToUserLocation?: boolean;
+  /** Locked when this returns true for the loaded record (legacy e.g.
+   *  chkCurrent.Enabled=false once a semester is already current). */
+  lockedWhen?: (record: Row | null) => boolean;
+  /** Dependent select options (legacy cascades, e.g. location → semesters):
+   *  `url` is recomputed from the form and a changed URL refetches; `pick` maps
+   *  the response (default Option[]). When the list no longer offers the value
+   *  (create, or after the user edits) it resets, to the first option with
+   *  `autoFirst` (legacy rebind without "Not Selected"), else to blank. */
+  optionsFrom?: {
+    url: (form: Record<string, unknown>) => string | null;
+    pick?: (res: unknown) => Option[];
+    autoFirst?: boolean;
+  };
 }
 
 // Type-ahead student picker (reuses /api/portal/edit/student-search). Sets the
@@ -214,7 +227,38 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
       .finally(() => setLoading(false));
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Dependent select options (FormField.optionsFrom) ────────────────────────
+  // An existing record keeps its loaded values until the user edits something,
+  // so a stored semester/coach outside today's list is never silently replaced.
+  const [depOpts, setDepOpts] = useState<Record<string, Option[]>>({});
+  const depUrls = useRef<Record<string, string>>({});
+  const touched = useRef(false);
+  const depFields = config.sections.flatMap((s) => s.fields).filter((fd) => fd.optionsFrom);
+  const depKey = depFields.map((fd) => fd.optionsFrom!.url(form) ?? '').join('|');
+  useEffect(() => {
+    for (const fd of depFields) {
+      const url = fd.optionsFrom!.url(form) ?? '';
+      if (depUrls.current[fd.key] === url) continue;
+      depUrls.current[fd.key] = url;
+      if (!url) { setDepOpts((d) => ({ ...d, [fd.key]: [] })); continue; }
+      apiRequest<unknown>(url)
+        .then((res) => {
+          if (depUrls.current[fd.key] !== url) return; // a newer URL won
+          const opts = fd.optionsFrom!.pick ? fd.optionsFrom!.pick(res) : (Array.isArray(res) ? res as Option[] : []);
+          setDepOpts((d) => ({ ...d, [fd.key]: opts }));
+          if (!isNew && (!touched.current || fd.readOnlyOnEdit)) return;
+          setForm((cur) => {
+            if (opts.some((o) => String(o.value) === String(cur[fd.key]))) return cur;
+            const blank = typeof opts[0]?.value === 'number' ? 0 : '';
+            return { ...cur, [fd.key]: fd.optionsFrom!.autoFirst && opts.length ? opts[0].value : blank };
+          });
+        })
+        .catch(() => {});
+    }
+  }, [depKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function set(key: string, value: unknown) {
+    touched.current = true;
     setForm((f) => ({ ...f, [key]: value }));
   }
 
@@ -264,7 +308,8 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
   function renderField(fd: FormField) {
     const v = form[fd.key];
     const locked = (!isNew && !!fd.readOnlyOnEdit)
-      || !!fd.lockedFor?.some((t) => t.toLowerCase() === userType);
+      || !!fd.lockedFor?.some((t) => t.toLowerCase() === userType)
+      || (!isNew && !!fd.lockedWhen?.(record));
     switch (fd.type) {
       case 'checkbox':
         return (
@@ -281,7 +326,16 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
           </div>
         );
       case 'select': {
-        const opts = fd.options ?? lookups[fd.optionsKey || ''] ?? [];
+        let opts = (fd.optionsFrom ? depOpts[fd.key] : undefined) ?? fd.options ?? lookups[fd.optionsKey || ''] ?? [];
+        // Keep a stored value visible when the list doesn't offer it (e.g. a
+        // session's class outside today's class list, a legacy "9:00" time):
+        // labelled from the record's `labelKey` column, or the value itself.
+        if ((fd.labelKey || fd.optionsFrom || fd.options) && v !== '' && v != null && v !== 0
+          && !opts.some((o) => String(o.value) === String(v))) {
+          const lbl = fd.labelKey && record ? record[fd.labelKey] : null;
+          if (lbl != null || typeof v === 'string')
+            opts = [...opts, { value: v as string | number, label: String(lbl ?? v) }];
+        }
         const numeric = typeof opts[0]?.value === 'number';
         return (
           <div key={fd.key} className={fd.colSpan2 ? 'md:col-span-2' : ''}>

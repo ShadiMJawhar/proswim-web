@@ -9,3 +9,9 @@ export function codedInvoiceId(id: number): string {
   }
   return coded;
 }
+
+/** Legacy GetCodedInvoiceID for group payments (PaymentsIndividual.aspx.cs):
+ *  234 → "Grp-234", 1234 → "Grp-A-234", 30286 → "Grp-C@-286". */
+export function groupInvoiceId(id: number): string {
+  return codedInvoiceId(id).replace(/^Prv-/, 'Grp-');
+}

@@ -57,17 +57,20 @@ function boxStyle(r: Row): React.CSSProperties {
   if (state.includes('canc')) color = COLOR_CANCELLED;
   if (attended >= total - 2) color = COLOR_ENDING;
 
-  if (followup === 'Renewing' || followup === 'Renewed' || followup === 'MovedtoGroup')
+  const fu = followup.toLowerCase();
+  if (fu === '') return { backgroundColor: color };
+  if (fu === 'renewing' || fu === 'renewed' || fu === 'movedtogroup')
     return { backgroundImage: `linear-gradient(to right, ${color}, ${color}, ${COLOR_STARTING})` };
-  if (followup === 'Leaving')
+  if (fu === 'leaving')
     return { backgroundImage: `linear-gradient(to right, ${color}, ${color}, #ebeb08)` };
-  return { backgroundColor: color };
+  // Legacy returned an empty style for any other follow-up value.
+  return {};
 }
 
 function boxBorder(r: Row): React.CSSProperties {
-  if (s(r.PrivateSessionState).toLowerCase() === 'frommakeup') return { border: '3px dotted green' };
-  if (s(r.PrivateSessionMkupDate)) return { border: '3px dotted #ebeb08' };
-  return { border: '3px dotted transparent' };
+  if (s(r.PrivateSessionState).toLowerCase() === 'frommakeup') return { border: '4px dotted green' };
+  if (s(r.PrivateSessionMkupDate)) return { border: '4px dotted #ebeb08' };
+  return { border: '4px dotted transparent' };
 }
 
 // Cell border when several sessions share one slot.
@@ -75,7 +78,7 @@ function mergedBorder(sessions: Row[]): React.CSSProperties {
   if (sessions.length <= 1) return {};
   const activeCnt = sessions.filter((x) => !s(x.PrivateSessionState).toLowerCase().includes('canc')).length;
   const color = activeCnt >= 2 ? '#e60650' : activeCnt === 1 ? '#7cdd25' : '#aabd04';
-  return { border: `4px solid ${color}` };
+  return { border: `6px solid ${color}` };
 }
 
 function fmtISO(d: Date): string {
@@ -97,12 +100,14 @@ function slotRemarkId(coachId: number, dateStr: string, time: string): number {
   return coachId * 100000 + d.getDay() * 10000 + Number(time.replace(':', '') || 0);
 }
 
-const COUNT_LABELS: Record<string, string> = {
-  AttendanceMoreThanPayment2: 'Packs Need Payment',
-  NeedtoBeClosed: 'Packs Need to Be Closed',
-  NeedFollowup: 'Packs Need Followup',
-  Freeze: 'Freeze Packs',
-};
+// Legacy header links, in their page order. The proc also returns a
+// 'NeedPayment' row, which the legacy page never showed.
+const COUNT_LABELS: [string, string][] = [
+  ['AttendanceMoreThanPayment2', 'Packs Need Payment'],
+  ['NeedtoBeClosed', 'Packs Need to Be Closed'],
+  ['NeedFollowup', 'Packs Need Followup'],
+  ['Freeze', 'Freeze Packs'],
+];
 
 // Attention counters open the private-packages list pre-filtered. The proc has
 // no 'Freeze' need-attention branch, so that one filters by package status.
@@ -121,15 +126,20 @@ export function PrSchedulePage() {
   const userType = (user?.userType || '').toLowerCase();
   const ownLocation = user?.primaryLocationId ?? 0;
   const isGuest = userType === 'guest';
-  const locationLocked = userType === 'user' && ownLocation > 0;
   const canSave = user?.canSave !== false;
+  // Remark links: legacy shows the coach-band, session-box and empty-slot
+  // remark links even on a read-only view; the remark API refuses guests and
+  // accounts without saving rights, so those don't get them.
+  const canRemark = !isGuest && canSave;
 
   const monday = mondayOfWeek(new Date());
   const [locations, setLocations] = useState<{ locationId: number; locationNickName: string | null }[]>([]);
   const [coaches, setCoaches] = useState<{ coachId: number; coachFullName: string | null }[]>([]);
   // Filters live in the URL so leaving the schedule and coming back restores
   // them; the mount-time load below then reloads the same week and criteria.
-  const [locationId, setLocationId] = useUrlState('locationId', ownLocation);
+  // The location is never locked: legacy ddlLocations stays enabled for every
+  // account type (other locations are read-only for 'user', see below).
+  const [locationId] = useUrlState('locationId', ownLocation);
   const [coachId, setCoachId] = useUrlState('coachId', 0);
   const [day, setDay] = useUrlState('day', '');
   const [search, setSearch] = useUrlState('search', '');
@@ -143,11 +153,13 @@ export function PrSchedulePage() {
   const [error, setError] = useState('');
   const [remarkEdit, setRemarkEdit] = useState<RemarkTarget | null>(null);
 
-  // Legacy _AccessReadOnly: guests, and user/superuser accounts looking at a
-  // location other than their own, get a view-only schedule (no package /
-  // payment / remark actions, no Add New, plain day headers).
-  const readOnly = isGuest
-    || ((userType === 'user' || userType === 'superuser') && ownLocation > 0 && locationId !== ownLocation);
+  // Legacy _AccessReadOnly: guests, and 'user' accounts looking at a location
+  // other than their own, get a view-only schedule (no package / payment /
+  // remark actions, no Add New, plain day headers). The superuser branch of
+  // that check never fired: ddlLocations_SelectedIndexChanged first copies the
+  // picked location into Session["UserLocationID"] for every non-'user' account,
+  // so a superuser always had full actions on whatever location was selected.
+  const readOnly = isGuest || (userType === 'user' && locationId !== ownLocation);
   const canAddNew = !readOnly && canSave;
 
   useEffect(() => {
@@ -159,7 +171,7 @@ export function PrSchedulePage() {
   // Coach filter = the active coaches of the selected location (legacy
   // ddlLocations_SelectedIndexChanged → Coach_Select(active, locationId)).
   useEffect(() => {
-    apiRequest<{ coaches: typeof coaches }>(`/api/portal/schedule/coaches?locationId=${locationId}`)
+    apiRequest<{ coaches: typeof coaches }>(`/api/portal/schedule/coaches?locationId=${locationId}&anyLocation=true`)
       .then((r) => {
         const list = r.coaches ?? [];
         setCoaches(list);
@@ -169,6 +181,7 @@ export function PrSchedulePage() {
   }, [locationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback((from: string, to: string) => {
+    if (!from || !to) return;
     setLoading(true);
     setError('');
     const q = new URLSearchParams({
@@ -183,14 +196,27 @@ export function PrSchedulePage() {
       .finally(() => setLoading(false));
   }, [locationId, coachId, search, day, freeTimes, onlyActive]);
 
-  useEffect(() => { load(dateFrom, dateTo); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Legacy AutoPostBack: location, dates, coach, day and the check boxes all
+  // reload the schedule on change (the search box waits for Search). This also
+  // does the first load. A blank "From" resets to the current week like
+  // Page_Load did; a blank "To" waits for a full date.
+  useEffect(() => {
+    if (!dateFrom) {
+      const m = mondayOfWeek(new Date());
+      patchUrl({ dateFrom: fmtISO(m), dateTo: fmtISO(new Date(m.getTime() + 5 * 86400000)) });
+      return;
+    }
+    load(dateFrom, dateTo);
+  }, [locationId, coachId, day, onlyActive, freeTimes, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function shiftWeek(offset: number) {
     const from = offset === 0 ? mondayOfWeek(new Date()) : new Date(new Date(dateFrom).getTime() + offset * 7 * 86400000);
     const f = fmtISO(from);
     const t = fmtISO(new Date(from.getTime() + 5 * 86400000));
-    patchUrl({ dateFrom: f, dateTo: t });
-    load(f, t);
+    // A date change reloads through the effect above; "This week" on the
+    // current week still reloads, like the legacy button.
+    if (f === dateFrom && t === dateTo) load(f, t);
+    else patchUrl({ dateFrom: f, dateTo: t });
   }
 
   // ── derived structures ────────────────────────────────────────────────────
@@ -276,15 +302,18 @@ export function PrSchedulePage() {
         slide={0}
         right={
           <div className="flex gap-2 flex-wrap justify-end items-center">
-            {(data?.countsHeader ?? []).filter((c) => n(c.Cnt) > 0).map((c) => (
-              <Link
-                key={s(c.Criteria)}
-                to={counterLink(s(c.Criteria), locationId)}
-                className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1 hover:bg-red-100"
-              >
-                {n(c.Cnt)} {COUNT_LABELS[s(c.Criteria)] ?? s(c.Criteria)}
-              </Link>
-            ))}
+            {COUNT_LABELS.map(([criteria, label]) => {
+              const cnt = n((data?.countsHeader ?? []).find((c) => s(c.Criteria) === criteria)?.Cnt);
+              return cnt > 0 && (
+                <Link
+                  key={criteria}
+                  to={counterLink(criteria, locationId)}
+                  className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1 hover:bg-red-100"
+                >
+                  {cnt} {label}
+                </Link>
+              );
+            })}
             {canAddNew ? (
               <Link
                 to={`/privates/new?locationId=${locationId}`}
@@ -322,9 +351,9 @@ export function PrSchedulePage() {
         </div>
         <select
           value={locationId}
-          onChange={(e) => setLocationId(Number(e.target.value))}
-          disabled={locationLocked}
-          className={`${selectCls} disabled:bg-slate-50 disabled:text-slate-400`}
+          // Legacy rebinds ddlCoaches on a location change, back to "Not Selected".
+          onChange={(e) => patchUrl({ locationId: Number(e.target.value), coachId: 0 })}
+          className={selectCls}
         >
           <option value={0}>All locations</option>
           {locations.map((l) => <option key={l.locationId} value={l.locationId}>{l.locationNickName}</option>)}
@@ -377,7 +406,9 @@ export function PrSchedulePage() {
 
       {readOnly && data && (
         <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-3">
-          <p className="text-xs text-amber-700">View-only: package, payment and remark actions are available on your own location only.</p>
+          <p className="text-xs text-amber-700">
+            {isGuest ? 'View-only account.' : 'View-only: package and payment actions are available on your own location only.'}
+          </p>
         </div>
       )}
 
@@ -408,6 +439,7 @@ export function PrSchedulePage() {
                     todayISO={todayISO}
                     locationId={locationId}
                     readOnly={readOnly}
+                    canRemark={canRemark}
                     timeRemark={timeRemark}
                     phones={phones}
                     onPhone={showPhone}
@@ -446,7 +478,7 @@ export function PrSchedulePage() {
 }
 
 function FragmentRows({
-  coach, total, remarksOnly, days, times, coachRows, todayISO, locationId, readOnly,
+  coach, total, remarksOnly, days, times, coachRows, todayISO, locationId, readOnly, canRemark,
   timeRemark, phones, onPhone, onSlotRemark, onCoachRemark,
 }: {
   coach: { name: string; id: number; remark: string };
@@ -458,6 +490,7 @@ function FragmentRows({
   todayISO: string;
   locationId: number;
   readOnly: boolean;
+  canRemark: boolean;
   timeRemark: (coachId: number, dateStr: string, time: string) => string;
   phones: Record<number, string>;
   onPhone: (studentId: number) => void;
@@ -476,7 +509,8 @@ function FragmentRows({
               <StickyNote className="size-3.5 text-amber-600" />
             </span>
           )}
-          {!readOnly && (
+          {/* Legacy shows the CoachPrivate remark link on read-only views too. */}
+          {canRemark && (
             <button
               type="button"
               onClick={onCoachRemark}
@@ -527,7 +561,9 @@ function FragmentRows({
               (r) => s(r.PrivateSessionTime) === t && s(r.PrivateSessionDate) === d
             );
             const real = sessions.filter((r) => n(r.PrivateSessionId) > 0);
-            const free = sessions.length > 0 && real.length === 0;
+            // Legacy paints both a free-time row (PrivateSessionId 0) and a slot
+            // with no row at all as an empty cell with the slot-remark link.
+            const free = real.length === 0;
             const remark = timeRemark(coach.id, d, t);
             return (
               <td
@@ -540,7 +576,9 @@ function FragmentRows({
               >
                 {free && (
                   <div className="p-1 text-[10px] text-slate-600 flex items-start gap-1">
-                    {!readOnly && (
+                    {/* Legacy: a free-time row's remark link is hidden when read-only,
+                        a slot with no row at all always has it. */}
+                    {canRemark && (sessions.length === 0 || !readOnly) && (
                       <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
                         <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-400'} hover:text-amber-600`} />
                       </button>
@@ -574,24 +612,44 @@ function FragmentRows({
                           Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}
                         </Link>
                       )}
-                      <span className={n(r.DuePercent) > 0 ? 'text-red-600 font-semibold' : ''}>
-                        Due {n(r.DuePercent)}%
-                      </span>
+                      {/* Legacy "Due x%" opens the add-payment popup (plain text when read-only). */}
+                      {readOnly ? (
+                        <span className={n(r.DuePercent) > 0 ? 'text-red-600 font-semibold' : ''}>
+                          Due {n(r.DuePercent)}%
+                        </span>
+                      ) : (
+                        <Link
+                          to={`/pr-payments/new?packageId=${n(r.PackageId)}`}
+                          title="Add payment"
+                          className={`hover:underline ${n(r.DuePercent) > 0 ? 'text-red-600 font-semibold' : ''}`}
+                        >
+                          Due {n(r.DuePercent)}%
+                        </Link>
+                      )}
                     </div>
-                    {(s(r.PrivateSessionRemarks) || remark) && (
-                      <div className="text-[10px] text-slate-700 mt-0.5">
-                        {[remark, s(r.PrivateSessionRemarks)].filter(Boolean).join(' ')}
-                      </div>
-                    )}
+                    {/* Legacy strRemarks = slot remark + " " + session remarks (only when longer than 1 char). */}
+                    {(() => {
+                      const own = s(r.PrivateSessionRemarks).length > 1 ? s(r.PrivateSessionRemarks) : '';
+                      return (own || remark) ? (
+                        <div className="text-[10px] text-slate-700 mt-0.5">
+                          {[remark, own].filter(Boolean).join(' ')}
+                        </div>
+                      ) : null;
+                    })()}
                     <div className="flex gap-1 mt-0.5">
                       {s(r.PAckagelevel) && (
                         <span className="text-[9px] font-semibold bg-white/60 rounded px-1">{s(r.PAckagelevel)}</span>
                       )}
+                      {/* Legacy follow-up icon opens the package, also on read-only views. */}
                       {s(r.PackageFollowUp) && (
-                        <span className="text-[9px] font-semibold bg-white/60 rounded px-1">{s(r.PackageFollowUp)}</span>
+                        <Link to={`/privates/${n(r.PackageId)}`} title="Open package"
+                          className="text-[9px] font-semibold bg-white/60 rounded px-1 hover:underline">
+                          {s(r.PackageFollowUp)}
+                        </Link>
                       )}
                     </div>
-                    {/* Actions: package, add payment, slot remark (hidden in read-only), phone */}
+                    {/* Actions: package + add payment (hidden in read-only), slot remark
+                        (legacy shows it on read-only views too), phone */}
                     <div className="flex items-center gap-1.5 mt-1">
                       {!readOnly && (
                         <>
@@ -601,10 +659,12 @@ function FragmentRows({
                           <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment">
                             <CreditCard className={`size-3 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
                           </Link>
-                          <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
-                            <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-600'} hover:text-amber-600`} />
-                          </button>
                         </>
+                      )}
+                      {canRemark && (
+                        <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
+                          <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-600'} hover:text-amber-600`} />
+                        </button>
                       )}
                       <button type="button" onClick={() => onPhone(n(r.Std1ID))} title="Show phone">
                         <Phone className="size-3 text-slate-600 hover:text-[#1e5c97]" />

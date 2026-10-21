@@ -63,6 +63,7 @@ const FULL_NAV: NavEntry[] = [
     children: [
       { to: '/schedule', label: 'Schedule', icon: CalendarDays },
       { to: '/registrations', label: 'Registrations', icon: BookOpen },
+      { to: '/registrations-not-renewed', label: 'Did Not Renew', icon: CalendarX },
       { to: '/sessions', label: 'Sessions', icon: ClipboardCheck },
       { to: '/sessions/generate', label: 'Generate Sessions', icon: CalendarPlus },
       // Attendance Details stays routable via the Summary's per-student links.
@@ -92,6 +93,7 @@ const FULL_NAV: NavEntry[] = [
       { to: '/extra-classes', label: 'Extra Classes', icon: BookOpen },
       { to: '/extra-attendance', label: 'Daily Attendance', icon: ClipboardCheck },
       { to: '/members', label: 'Memberships', icon: UserRound },
+      { to: '/m-attendance', label: 'Membership Attendance', icon: ClipboardCheck },
       { to: '/ex-payments', label: 'Extra Payments', icon: CreditCard },
       { to: '/m-payments', label: 'Membership Payments', icon: CreditCard },
     ],

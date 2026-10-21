@@ -13,10 +13,10 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import {
   Loader2, AlertCircle, Plus, X, Truck, ChevronDown, ChevronRight, ChevronLeft, Lock, Unlock, Download,
-  Printer, ArrowUp, ArrowDown, ArrowUpDown,
+  Printer, ArrowUp, ArrowDown, ArrowUpDown, Pencil,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
-import { useUrlState } from '../lib/urlState';
+import { useUrlState, useUrlPatch } from '../lib/urlState';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
 
@@ -175,6 +175,108 @@ ${expenses.length > 0 ? `<tr><td colspan="4" align="center"><table class="lines"
 </table></body></html>`;
 }
 
+// ── Group delivery (PaymentDeliverysIndividual.aspx) helpers ────────────────
+
+// Legacy RowDataBound colours: Cash (102,255,102), CC (153,255,153), Chq
+// (204,255,204), Expense (255,204,204); a payment of another semester than the
+// delivery's is 40 darker with dark-red text.
+function groupRowStyle(l: Row, semesterName: string): React.CSSProperties {
+  const t = str(l, 'Type').toLowerCase();
+  const mode = str(l, 'Mode').toLowerCase();
+  let rgb: [number, number, number] | null = null;
+  if (t.includes('cash')) rgb = [102, 255, 102];
+  if (t.includes('cc')) rgb = [153, 255, 153];
+  if (t.includes('chq')) rgb = [204, 255, 204];
+  if (mode.includes('expense')) rgb = [255, 204, 204];
+  const style: React.CSSProperties = {};
+  if (!mode.includes('expense') && semesterName && !str(l, 'SemesterName').toLowerCase().includes(semesterName.toLowerCase())) {
+    const base = rgb ?? [255, 255, 255];
+    rgb = [base[0] - 40, base[1] - 40, base[2] - 40];
+    style.color = '#8b0000';
+  }
+  if (rgb) style.backgroundColor = `rgb(${rgb.join(',')})`;
+  return style;
+}
+
+/** Legacy group totals: Payments = Σ Amount (LBP figure) of the payment rows,
+ *  Expenses = Σ Amount of the expense rows, Net = Payments − Expenses. */
+function groupTotals(lines: Row[]) {
+  let payments = 0, expenses = 0;
+  for (const l of lines) {
+    if (str(l, 'Mode').toLowerCase() === 'expense') expenses += num(l, 'Amount');
+    else payments += num(l, 'Amount');
+  }
+  return { payments, expenses, net: payments - expenses };
+}
+
+// Legacy LblPaymentsSplit: paid amounts per currency, minus the expenses per
+// currency and the resulting net when there are expenses.
+function groupSplit(lines: Row[]): string {
+  let pL = 0, pU = 0, eL = 0, eU = 0;
+  for (const l of lines) {
+    const cur = str(l, 'Currency').toUpperCase();
+    const paid = num(l, 'PaidAmount');
+    const exp = str(l, 'Mode').toLowerCase() === 'expense';
+    if (cur === 'LBP') { if (exp) eL += paid; else pL += paid; }
+    else if (cur === 'USD') { if (exp) eU += paid; else pU += paid; }
+  }
+  let text = `[ LBP ${money2(pL)} +  USD ${money2(pU)}]`;
+  if (eL > 0 || eU > 0) text += ` - [ LBP ${money2(eL)} +  USD ${money2(eU)}]   >>  [ LBP ${money2(pL - eL)} +  USD ${money2(pU - eU)}]`;
+  return text;
+}
+
+const fixed2 = (v: number) => v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Reproduces the legacy group BtnPrint receipt (its heading really says
+// "Private Package"); every grid row goes in the one details table.
+function buildGroupPrintHtml(h: {
+  serial: string; amount: number; location: string; semester: string; generated: string; received: string;
+  payments: number; expenses: number; net: number; remarks: string;
+}, lines: Row[]): string {
+  const cell = (v: string, bold = false) => `<td align="center">${bold ? '<b>' : ''}${esc(v)}${bold ? '</b>' : ''}</td>`;
+  const rows = lines.map((l) => `<tr>${cell(str(l, 'Mode'))}${cell(str(l, 'Type'))}${cell(dmy(pick(l, 'PEDate')))}`
+    + `${cell(money0(num(l, 'Amount')), true)}${cell(money2(num(l, 'PaidAmount')), true)}${cell(str(l, 'Currency'), true)}`
+    + `${cell(str(l, 'PaymentIssuedTo'))}</tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Payment Delivery ${esc(h.serial)}</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;font-size:13px;margin:24px}table.lines td{padding:4px 8px}h2,h3{margin:8px 0}</style></head><body>
+<table cellspacing="3" cellpadding="3" width="100%">
+<tr><td colspan="2"><h2>Private Package</h2></td><td colspan="2" align="right">Swimming Classes</td></tr>
+<tr><td style="width:90px"></td><td style="width:200px"></td><td style="width:120px"></td><td style="width:150px"></td></tr>
+<tr><td align="left">Serial Number:</td><td align="left"><b>${esc(h.serial)}</b></td><td align="left">Amount:</td><td align="left"><u><i><b>${esc(fixed2(h.amount))}</b></i></u></td></tr>
+<tr><td align="left">Location:</td><td align="left"><b>${esc(h.location)}</b></td><td align="left">Semester:</td><td align="left"><b>${esc(h.semester)}</b></td></tr>
+<tr><td align="left">Generated On:</td><td align="left"><b>${esc(h.generated)}</b></td><td align="left">Recieved On:</td><td align="left"><b>${esc(h.received)}</b></td></tr>
+<tr><td align="left">Payments:</td><td align="left"><u><i><b>${esc(fixed2(h.payments))}</b></i></u></td><td align="left">Expenses:</td><td align="left"><u><i><b>${esc(fixed2(h.expenses))}</b></i></u></td></tr>
+<tr><td align="left">Net to Deliver:</td><td align="left"><u><i><b>${esc(fixed2(h.net))}</b></i></u></td><td align="left">Remarks:</td><td align="left"><b>${esc(h.remarks)}</b></td></tr>
+<tr><td colspan="2"><h3>Payment Delivery Details</h3></td><td colspan="2" align="right"></td></tr>
+<tr><td colspan="4" align="left"><p><b>${esc(groupSplit(lines))}</b></p></td></tr>
+<tr><td colspan="4" align="left"><table class="lines" width="90%" border="1" style="border-style:solid">
+<tr><td align="center">Mode</td><td align="center">Type</td><td align="center">PEDate</td><td align="center"><b>USD</b></td><td align="center"><b>Paid</b></td><td align="center"><b>Currency</b></td><td align="center">Issued To</td></tr>
+${rows}</table></td></tr>
+</table></body></html>`;
+}
+
+/** Fills a tab opened synchronously inside the click (pop-up blockers) with
+ *  the receipt and prints it. */
+function printHtml(w: Window | null, html: string) {
+  if (!w) { window.alert('Allow pop-ups for this site to print a delivery.'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 150);
+}
+
+/** Print header fields from a stored P_PaymentDelivery_Select row. */
+function groupHeaderForPrint(h: Row) {
+  return {
+    serial: str(h, 'PaymentDeliverySerialNumber'), amount: num(h, 'PaymentDeliveryAmount'),
+    location: str(h, 'LocationNickName'), semester: str(h, 'SemesterName'),
+    generated: dmy(pick(h, 'PaymentDeliveryGenerationDate')), received: dmy(pick(h, 'PaymentDeliveryRecievedDate')),
+    payments: num(h, 'PaymentDeliveryTotalPayments'), expenses: num(h, 'PaymentDeliveryTotalExpenses'),
+    net: num(h, 'PaymentDeliveryTotalDifference'), remarks: str(h, 'PaymentDeliveryRemarks'),
+  };
+}
+
 // Client-side sort + page machinery (legacy sorted/paged the cached DataTable).
 function useGrid(rows: Row[], pageSize: number) {
   const [sortKey, setSortKey] = useState('');
@@ -243,10 +345,14 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
   const canSave = user?.canSave !== false && userType !== 'guest' && userType !== 'payment/audit';
   const isSiteMaster = userType === 'sitemaster';
   const primaryLocation = user?.primaryLocationId ?? 0;
-  // Legacy private pages: the location dropdown is disabled for everyone but a
-  // SiteMaster and sits on the user's primary location.
-  const lockLocation = variant.isPrivate && !isSiteMaster;
-  const noLocation = lockLocation && !primaryLocation;
+  // Legacy private and group pages: the location dropdown is disabled for
+  // everyone but a SiteMaster and sits on the user's primary location (group:
+  // "Not Selected" = every location when the user has none).
+  const lockLocation = !isSiteMaster;
+  const noLocation = variant.isPrivate && lockLocation && !primaryLocation;
+  // Legacy group grid: the Edit popup (with Print / Deleted / Closed) for all
+  // but payment/audit.
+  const canOpenGroup = !variant.isPrivate && userType !== 'payment/audit' && userType !== 'guest';
 
   const [rows, setRows] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Option[]>([]);
@@ -260,7 +366,12 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
   const [detail, setDetail] = useState<{ header: Row; lines: Row[] } | null>(null);
-  const [semFilter, setSemFilter] = useUrlState('semester', '');
+  const [editId, setEditId] = useState<number | null>(null);
+  // Group: legacy ddlSemester = the location's semesters ("Not Selected" = all),
+  // opening on its current semester. -1 = not resolved yet for this location.
+  const [semesterId, setSemesterId] = useUrlState('semesterId', -1);
+  const [semOptions, setSemOptions] = useState<Option[]>([]);
+  const patchUrl = useUrlPatch();
 
   useEffect(() => {
     apiRequest<{ locations: Option[] }>('/api/portal/modules/lookups')
@@ -268,12 +379,25 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!variant.hasSemester) return;
+    if (!locationId) { setSemOptions([]); if (semesterId === -1) setSemesterId(0); return; }
+    apiRequest<{ semesters: Row[]; selectedIds?: string }>(`/api/portal/modules/semester-options?locationIds=${locationId}&pick=current`)
+      .then((r) => {
+        setSemOptions((r.semesters ?? []).map((x) => ({ value: num(x, 'SemesterId'), label: str(x, 'SemesterName') })).filter((o) => o.value > 0));
+        if (semesterId === -1) setSemesterId(Number(String(r.selectedIds ?? '').split(',')[0]) || 0);
+      })
+      .catch(() => { setSemOptions([]); if (semesterId === -1) setSemesterId(0); });
+  }, [locationId, variant.hasSemester]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function load() {
     if (noLocation) { setRows([]); setLoading(false); return; }
+    if (variant.hasSemester && semesterId === -1) return; // the semester list resolves first
     setLoading(true);
     setError('');
     const q = new URLSearchParams();
     if (locationId) q.set('locationId', String(locationId));
+    if (variant.hasSemester && semesterId > 0) q.set('semesterId', String(semesterId));
     if (search.trim()) q.set('searchFor', search.trim());
     if (showDeleted) q.set('deleted', 'true');
     apiRequest<Row[]>(`/api/portal/finance/${variant.base}?${q}`)
@@ -281,7 +405,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load deliveries.'))
       .finally(() => setLoading(false));
   }
-  useEffect(load, [locationId, showDeleted]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [locationId, showDeleted, semesterId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleDetail(id: number) {
     if (openId === id) { setOpenId(null); setDetail(null); return; }
@@ -321,18 +445,23 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
       .catch(() => { w.document.body.innerHTML = '<p style="font-family:sans-serif">Could not load the delivery.</p>'; });
   }
 
-  // Group deliveries can be narrowed by semester (client-side, from loaded rows).
-  const semesters = useMemo(
-    () => Array.from(new Set(rows.map((r) => str(r, 'SemesterName')).filter(Boolean))).sort(),
-    [rows],
-  );
-  const displayRows = useMemo(
-    () => (variant.hasSemester && semFilter ? rows.filter((r) => str(r, 'SemesterName') === semFilter) : rows),
-    [rows, semFilter, variant.hasSemester],
-  );
+  // Group: legacy Print from the Edit popup (stored delivery + its lines).
+  function printGroupDelivery(id: number) {
+    const w = window.open('', '_blank');
+    apiRequest<{ header: Row; lines: Row[] }>(`/api/portal/finance/${variant.base}/${id}`)
+      .then((d) => printHtml(w, buildGroupPrintHtml(groupHeaderForPrint(d.header), d.lines)))
+      .catch(() => { w?.close(); window.alert('Could not load the delivery.'); });
+  }
+
+  const displayRows = rows;
   const grid = useGrid(displayRows, variant.pageSize);
   // Legacy footer sums the whole result, not the visible page.
   const amountTotal = useMemo(() => displayRows.reduce((s, r) => s + num(r, variant.amountKey), 0), [displayRows, variant.amountKey]);
+  const groupFooter = useMemo(() => ({
+    payments: displayRows.reduce((s, r) => s + num(r, 'PaymentDeliveryTotalPayments'), 0),
+    expenses: displayRows.reduce((s, r) => s + num(r, 'PaymentDeliveryTotalExpenses'), 0),
+    net: displayRows.reduce((s, r) => s + num(r, 'PaymentDeliveryTotalDifference'), 0),
+  }), [displayRows]);
 
   function exportCsv() {
     const cols: [string, (r: Row) => string][] = [
@@ -358,7 +487,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
   }
 
   const inputCls = 'rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
-  const showActions = isSiteMaster || variant.isPrivate;
+  const showActions = isSiteMaster || variant.isPrivate || canOpenGroup;
   const colCount = 10;
 
   return (
@@ -371,17 +500,21 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
           onKeyDown={(e) => e.key === 'Enter' && load()}
           placeholder="Search…" className={`${inputCls} w-44`} />
         <select value={locationId} disabled={lockLocation}
-          onChange={(e) => setLocationId(Number(e.target.value))}
+          onChange={(e) => {
+            const v = Number(e.target.value);
+            // Group: a new location re-resolves its current semester.
+            if (variant.hasSemester) patchUrl({ locationId: v, semesterId: -1 }); else setLocationId(v);
+          }}
           className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-500`}
           title={lockLocation ? 'Only a SiteMaster can change the location' : undefined}>
-          {(!variant.isPrivate || isSiteMaster) && <option value={0}>All locations</option>}
+          {(!variant.isPrivate || isSiteMaster) && <option value={0}>{variant.hasSemester ? 'Not Selected' : 'All locations'}</option>}
           {noLocation && <option value={0}>No location assigned</option>}
           {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </select>
-        {variant.hasSemester && semesters.length > 0 && (
-          <select value={semFilter} onChange={(e) => setSemFilter(e.target.value)} className={inputCls}>
-            <option value="">All semesters</option>
-            {semesters.map((s) => <option key={s} value={s}>{s}</option>)}
+        {variant.hasSemester && (
+          <select value={Math.max(0, semesterId)} onChange={(e) => setSemesterId(Number(e.target.value))} className={inputCls}>
+            <option value={0}>Not Selected</option>
+            {semOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         )}
         <label className="flex items-center gap-1.5 text-sm text-slate-600 select-none">
@@ -422,8 +555,8 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
         </div>
       )}
 
-      {variant.isPrivate && !loading && !noLocation && (
-        <p className="text-sm font-semibold text-[#1e5c97] mb-2">{displayRows.length.toLocaleString()} Private Payments</p>
+      {!loading && !noLocation && (
+        <p className="text-sm font-semibold text-[#1e5c97] mb-2">{displayRows.length.toLocaleString()} {variant.isPrivate ? 'Private Payments' : 'Payments'}</p>
       )}
 
       {loading ? (
@@ -467,11 +600,24 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                       {showActions && (
                         <td onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-3">
-                            {variant.isPrivate && (
+                            {/* Legacy hides the Edit popup (where Print lives) from payment/audit. */}
+                            {variant.isPrivate && userType !== 'payment/audit' && (
                               <button onClick={() => printDelivery(id)} title="Print receipt"
                                 className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
                                 <Printer className="size-3.5" /> Print
                               </button>
+                            )}
+                            {canOpenGroup && (
+                              <>
+                                <button onClick={() => setEditId(id)} title="Open the delivery (Deleted / Closed, print)"
+                                  className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
+                                  <Pencil className="size-3.5" /> Edit
+                                </button>
+                                <button onClick={() => printGroupDelivery(id)} title="Print receipt"
+                                  className="inline-flex items-center gap-1 text-xs font-bold text-[#1e5c97] hover:underline">
+                                  <Printer className="size-3.5" /> Print
+                                </button>
+                              </>
                             )}
                             {isSiteMaster && (
                               <button onClick={() => setClosed(id, !closed)}
@@ -493,7 +639,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                           ) : (
                             <>
                               {variant.isPrivate && <PrivateHeader header={detail.header} lines={detail.lines} />}
-                              <DeliveryLines lines={detail.lines} variant={variant} />
+                              <DeliveryLines lines={detail.lines} variant={variant} semesterName={str(detail.header, "SemesterName")} />
                             </>
                           )}
                         </td>
@@ -513,6 +659,19 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                 </tr>
               </tfoot>
             )}
+            {/* Legacy group footer (SiteMaster): Payments / Expenses / Net sums. */}
+            {variant.hasSemester && isSiteMaster && displayRows.length > 0 && (
+              <tfoot>
+                <tr className="bg-slate-50 font-bold">
+                  <td />
+                  <td colSpan={3} className="text-slate-500 text-sm">Total</td>
+                  <td className="text-right tabular-nums">{money0(groupFooter.payments)}</td>
+                  <td className="text-right tabular-nums">{money0(groupFooter.expenses)}</td>
+                  <td className="text-right tabular-nums">{money0(groupFooter.net)}</td>
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            )}
           </table>
           <Pager grid={grid} total={displayRows.length} />
         </div>
@@ -528,6 +687,144 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
           onClose={(saved) => { setCreating(false); if (saved) load(); }}
         />
       )}
+
+      {editId != null && (
+        <GroupDeliveryEditor
+          id={editId}
+          isSiteMaster={isSiteMaster}
+          canSave={canSave}
+          onClose={(saved) => { setEditId(null); if (saved) load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Legacy PaymentDeliverysIndividual.aspx in edit mode: the stored fields are
+// read-only, "Deleted" can be ticked, "Closed" only by a SiteMaster, and Save
+// is hidden on a closed delivery unless SiteMaster. Print reprints the receipt.
+function GroupDeliveryEditor({ id, isSiteMaster, canSave, onClose }: {
+  id: number; isSiteMaster: boolean; canSave: boolean; onClose: (saved: boolean) => void;
+}) {
+  const [data, setData] = useState<{ header: Row; lines: Row[] } | null>(null);
+  const [deleted, setDeleted] = useState(false);
+  const [closed, setClosed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiRequest<{ header: Row; lines: Row[] }>(`/api/portal/finance/deliveries/${id}`)
+      .then((d) => { setData(d); setDeleted(flag(d.header, 'PaymentDeliveryDeleted')); setClosed(flag(d.header, 'PaymentDeliveryClosed')); })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load the delivery.'));
+  }, [id]);
+
+  const h = data?.header ?? {};
+  const wasClosed = flag(h, 'PaymentDeliveryClosed');
+  const showSave = canSave && (!wasClosed || isSiteMaster);
+  const semesterName = str(h, 'SemesterName');
+
+  async function save() {
+    setSaving(true); setError('');
+    try {
+      const body: Record<string, unknown> = { deleted };
+      if (isSiteMaster) body.closed = closed;
+      await apiRequest(`/api/portal/finance/deliveries/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+      onClose(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the delivery.');
+      setSaving(false);
+    }
+  }
+
+  function print() {
+    if (!data) return;
+    printHtml(window.open('', '_blank'), buildGroupPrintHtml(groupHeaderForPrint(data.header), data.lines));
+  }
+
+  const ro = 'rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm w-full text-slate-600';
+  const F = (label: string, value: string) => (
+    <div key={label}><label className="block text-xs font-semibold text-slate-500 mb-1">{label}</label><input value={value} readOnly className={ro} /></div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-start justify-center overflow-y-auto p-4 md:p-10">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <Truck className="size-5 text-[#1e5c97]" /> Payment Delivery {str(h, 'PaymentDeliverySerialNumber')}
+          </p>
+          <button onClick={() => onClose(false)}><X className="size-5 text-slate-400 hover:text-slate-600" /></button>
+        </div>
+        {error && (
+          <div className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl p-3 mb-3">
+            <AlertCircle className="size-4 text-red-500 shrink-0" />
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
+        {!data ? (
+          !error && <div className="flex items-center gap-2 py-6 text-sm text-slate-400"><Loader2 className="size-4 animate-spin" /> Loading…</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              {F("Location", str(h, 'LocationNickName'))}
+              {F("Semester", semesterName)}
+              {F("Serial #", str(h, 'PaymentDeliverySerialNumber'))}
+              {F("Amount", fixed2(num(h, 'PaymentDeliveryAmount')))}
+              {F("Generated On", dmy(pick(h, 'PaymentDeliveryGenerationDate')))}
+              {F("Recieved On", dmy(pick(h, 'PaymentDeliveryRecievedDate')))}
+              {F("Payments", fixed2(num(h, 'PaymentDeliveryTotalPayments')))}
+              {F("Expenses", fixed2(num(h, 'PaymentDeliveryTotalExpenses')))}
+              {F("Net to Deliver", fixed2(num(h, 'PaymentDeliveryTotalDifference')))}
+              <div className="md:col-span-2">{F("Remarks", str(h, 'PaymentDeliveryRemarks'))}</div>
+              <div className="flex items-end gap-4 pb-1.5">
+                <label className="flex items-center gap-1.5 text-sm text-slate-600 select-none">
+                  <input type="checkbox" checked={deleted} disabled={!showSave} onChange={(e) => setDeleted(e.target.checked)} className="accent-[#1e5c97]" />
+                  Deleted
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-slate-600 select-none">
+                  <input type="checkbox" checked={closed} disabled={!isSiteMaster || !showSave} onChange={(e) => setClosed(e.target.checked)} className="accent-[#1e5c97]" />
+                  Closed
+                </label>
+              </div>
+            </div>
+            <p className="text-sm font-bold text-emerald-800 text-center mb-2">{groupSplit(data.lines)}</p>
+            <div className="border border-slate-100 rounded-xl overflow-y-auto max-h-80 mb-4">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-slate-500">
+                    <th className="text-left p-1.5">Mode</th><th className="text-left">Type</th><th className="text-left">PEDate</th>
+                    <th className="text-right">Amount</th><th className="text-right">PaidAmount</th><th className="text-left px-1">Currency</th>
+                    <th className="text-left">Issued_To</th><th className="text-left">SemesterName</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.lines.map((l, i) => (
+                    <tr key={i} style={groupRowStyle(l, semesterName)}>
+                      <td className="p-1.5">{str(l, 'Mode')}</td><td>{str(l, 'Type')}</td><td>{dmy(pick(l, 'PEDate'))}</td>
+                      <td className="text-right">{money0(num(l, 'Amount'))}</td><td className="text-right">{money0(num(l, 'PaidAmount'))}</td>
+                      <td className="px-1">{str(l, 'Currency')}</td><td>{str(l, 'PaymentIssuedTo')}</td><td>{str(l, 'SemesterName')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <button onClick={() => onClose(false)} className="rounded-lg border border-slate-200 text-sm font-semibold px-4 py-2">Close</button>
+          <button onClick={print} disabled={!data}
+            className="flex items-center gap-1.5 rounded-lg border border-[#1e5c97]/30 text-[#1e5c97] text-sm font-semibold px-4 py-2 disabled:opacity-50">
+            <Printer className="size-4" /> Print
+          </button>
+          {showSave && (
+            <button onClick={save} disabled={saving || !data}
+              className="flex items-center gap-1.5 rounded-lg bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-semibold px-5 py-2 disabled:opacity-50">
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Truck className="size-4" />}
+              Save
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -555,7 +852,7 @@ function PrivateHeader({ header, lines }: { header: Row; lines: Row[] }) {
   );
 }
 
-function DeliveryLines({ lines, variant }: { lines: Row[]; variant: Variant }) {
+function DeliveryLines({ lines, variant, semesterName = "" }: { lines: Row[]; variant: Variant; semesterName?: string }) {
   if (lines.length === 0) return <p className="text-sm text-slate-400">No lines recorded.</p>;
   return (
     <table className="w-full text-xs">
@@ -571,7 +868,7 @@ function DeliveryLines({ lines, variant }: { lines: Row[]; variant: Variant }) {
           const isExpense = str(l, 'Mode').toLowerCase() === 'expense';
           const cls = isExpense ? 'text-red-700' : variant.isPrivate ? typeRowClass(l) : '';
           return (
-            <tr key={i} className={cls}>
+            <tr key={i} className={variant.isPrivate ? cls : ""} style={variant.isPrivate ? undefined : groupRowStyle(l, semesterName)}>
               <td className="py-0.5 px-1">{str(l, 'Mode')}</td>
               <td className="px-1">{str(l, 'Type')}</td>
               <td className="px-1">{dmy(pick(l, 'PEDate'))}</td>
@@ -603,9 +900,13 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [remarks, setRemarks] = useState('');
   // Legacy defaults both dates to today; both stay editable.
-  const [receivedDate, setReceivedDate] = useState(variant.isPrivate ? todayIso() : '');
+  const [receivedDate, setReceivedDate] = useState(todayIso());
   const [generatedDate, setGeneratedDate] = useState(todayIso());
   const [closed, setClosed] = useState(false);
+  // Group: legacy ddlSemesters (the location's semesters, current one first)
+  // and the editable Amount, which starts at the Net and must equal it on save.
+  const [semOptions, setSemOptions] = useState<Option[]>([]);
+  const [amountText, setAmountText] = useState('0');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -622,8 +923,14 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
         setSemesterId(r.semesterId ?? 0);
         setSemesterName(r.semesterName ?? '');
         setChecked(new Set(r.lines.map((l) => lineId(l, variant))));
+        if (variant.hasSemester) setAmountText(groupTotals(r.lines).net.toFixed(2));
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load undelivered lines.'));
+    if (variant.hasSemester) {
+      apiRequest<{ semesters: Row[] }>(`/api/portal/modules/semester-options?locationIds=${locationId}&pick=current`)
+        .then((r) => setSemOptions((r.semesters ?? []).map((x) => ({ value: num(x, 'SemesterId'), label: str(x, 'SemesterName') })).filter((o) => o.value > 0)))
+        .catch(() => setSemOptions([]));
+    }
   }, [locationId, variant]);
 
   const checkedLines = useMemo(
@@ -643,6 +950,11 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
   async function save() {
     if (checked.size === 0) { setError('Select at least one line.'); return; }
     if (variant.hasSemester && !semesterId) { setError('No current semester found for this location.'); return; }
+    // Legacy BtnSaveChanges: "Total Amount Not as Same as Net to Deliver".
+    if (variant.hasSemester && Math.round((Number(amountText.replace(/,/g, '')) || 0) * 100) !== Math.round(totals.net * 100)) {
+      setError('Total Amount Not as Same as Net to Deliver, Please Check');
+      return;
+    }
     setSaving(true);
     setError('');
     const lines = checkedLines.map((l) => ({ individualId: lineId(l, variant), mode: str(l, 'Mode') }));
@@ -653,11 +965,13 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
       lines,
     };
     if (variant.hasSemester) {
+      // Plain yyyy-mm-dd days, like the private variant (the API keeps the
+      // legacy swap of the two date columns).
       Object.assign(body, {
-        generationDate: new Date().toISOString(),
-        receivedDate: receivedDate ? new Date(receivedDate).toISOString() : new Date().toISOString(),
+        generationDate: generatedDate || todayIso(),
+        receivedDate: receivedDate || todayIso(),
         semesterId,
-        amount: totals.net,
+        amount: Number(amountText.replace(/,/g, '')) || 0,
         totalPayments: totals.payments,
         totalExpenses: totals.expenses,
         totalDifference: totals.net,
@@ -684,9 +998,19 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
 
   const inputCls = 'rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
 
+  // Legacy group BtnPrint: prints the form as it stands (no save).
+  function printGroup() {
+    printHtml(window.open('', '_blank'), buildGroupPrintHtml({
+      serial, amount: Number(amountText.replace(/,/g, '')) || 0,
+      location: locations.find((l) => l.value === locationId)?.label ?? '', semester: semesterName,
+      generated: dmy(generatedDate), received: dmy(receivedDate),
+      payments: totals.payments, expenses: totals.expenses, net: totals.net, remarks,
+    }, checkedLines));
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-start justify-center overflow-y-auto p-4 md:p-10">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-5">
+      <div className={`bg-white rounded-2xl shadow-xl w-full ${variant.hasSemester ? 'max-w-4xl' : 'max-w-3xl'} p-5`}>
         <div className="flex items-center justify-between mb-4">
           <p className="text-base font-bold text-slate-800 flex items-center gap-2">
             <Truck className="size-5 text-[#1e5c97]" /> New {variant.title}
@@ -712,17 +1036,26 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
           {variant.hasSemester && (
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Semester</label>
-              <input value={semesterName || '-'} readOnly className={`${inputCls} w-full bg-slate-50`} />
+              <select value={semesterId}
+                onChange={(e) => { const v = Number(e.target.value); setSemesterId(v); setSemesterName(semOptions.find((o) => o.value === v)?.label ?? ''); }}
+                className={`${inputCls} w-full`}>
+                {(semesterId === 0 || !semOptions.some((o) => o.value === semesterId)) && <option value={semesterId}>{semesterName || '-'}</option>}
+                {semOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </div>
           )}
-          {variant.isPrivate && (
+          {variant.hasSemester && (
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Generated On</label>
-              <DateInput value={generatedDate} onChange={(e) => setGeneratedDate(e.target.value)} className={`${inputCls} w-full`} />
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Amount</label>
+              <input value={amountText} onChange={(e) => setAmountText(e.target.value)} className={`${inputCls} w-full text-right`} />
             </div>
           )}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">{variant.isPrivate ? 'Received On' : 'Received Date'}</label>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">Generated On</label>
+            <DateInput value={generatedDate} onChange={(e) => setGeneratedDate(e.target.value)} className={`${inputCls} w-full`} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">{variant.isPrivate ? 'Received On' : 'Recieved On'}</label>
             <DateInput value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} className={`${inputCls} w-full`} />
           </div>
           {variant.isPrivate && isSiteMaster && (
@@ -761,8 +1094,9 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
                   </th>
                   <th className="text-left">Mode</th><th className="text-left">Type</th><th className="text-left">Date</th>
                   <th className="text-right">Amount</th>
-                  {variant.isPrivate && <th className="text-right">Paid</th>}
+                  <th className="text-right">Paid</th>
                   <th className="text-left px-1">Curr</th><th className="text-left">Issued To</th>
+                  {variant.hasSemester && <th className="text-left">Semester</th>}
                 </tr>
               </thead>
               <tbody>
@@ -771,7 +1105,7 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
                   const isExpense = str(l, 'Mode').toLowerCase() === 'expense';
                   const cls = isExpense ? 'text-red-700' : variant.isPrivate ? typeRowClass(l) : '';
                   return (
-                    <tr key={id} className={cls}>
+                    <tr key={id} className={variant.isPrivate ? cls : ''} style={variant.isPrivate ? undefined : groupRowStyle(l, semesterName)}>
                       <td className="p-1.5 text-center">
                         <input type="checkbox" checked={checked.has(id)}
                           onChange={(e) => setChecked((prev) => {
@@ -785,9 +1119,10 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
                       <td>{str(l, 'Type')}</td>
                       <td>{dmy(pick(l, 'PEDate'))}</td>
                       <td className="text-right">{money(pick(l, 'Amount'))}</td>
-                      {variant.isPrivate && <td className="text-right">{money2(num(l, 'PaidAmount'))}</td>}
+                      <td className="text-right">{money2(num(l, 'PaidAmount'))}</td>
                       <td className="px-1">{str(l, 'Currency')}</td>
                       <td>{str(l, variant.issuedToKey) || str(l, 'PaymentIssuedTo')}</td>
+                      {variant.hasSemester && <td>{str(l, 'SemesterName')}</td>}
                     </tr>
                   );
                 })}
@@ -805,6 +1140,9 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
           {variant.isPrivate && candidates && candidates.length > 0 && (
             <span className="font-bold text-slate-700">{currencySplit(checkedLines)}</span>
           )}
+          {variant.hasSemester && candidates && candidates.length > 0 && (
+            <span className="font-bold text-emerald-800">{groupSplit(checkedLines)}</span>
+          )}
         </div>
 
         <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2}
@@ -812,6 +1150,12 @@ function CreateDelivery({ variant, locations, initialLocation, lockLocation, isS
 
         <div className="flex justify-end gap-2">
           <button onClick={() => onClose(false)} className="rounded-lg border border-slate-200 text-sm font-semibold px-4 py-2">Cancel</button>
+          {variant.hasSemester && (
+            <button onClick={printGroup} disabled={!candidates}
+              className="flex items-center gap-1.5 rounded-lg border border-[#1e5c97]/30 text-[#1e5c97] text-sm font-semibold px-4 py-2 disabled:opacity-50">
+              <Printer className="size-4" /> Print
+            </button>
+          )}
           <button onClick={save} disabled={saving || checked.size === 0}
             className="flex items-center gap-1.5 rounded-lg bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-semibold px-5 py-2 disabled:opacity-50">
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Truck className="size-4" />}

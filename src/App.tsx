@@ -10,7 +10,7 @@ import { StudentDetailPage } from './pages/StudentDetailPage';
 import { GSchedulePage } from './pages/GSchedulePage';
 import { PrSchedulePage } from './pages/PrSchedulePage';
 import {
-  RegistrationsPage, PaymentsPage, PaymentsDuePage, PrivatePackagesPage,
+  RegistrationsPage, NotRenewedPage, PaymentsPage, PaymentsDuePage, PrivatePackagesPage,
   PrivatePaymentsPage, ExtraPaymentsPage, MembershipPaymentsPage,
   ExtraClassesPage, MembershipsPage, CoachesPage, ClassesPage,
   SemestersPage, SessionsPage,
@@ -18,8 +18,9 @@ import {
 import {
   SemesterForm, CoachForm, ClassForm, StudentForm,
   ExpenseForm, PackTypeForm, UserForm, TimesheetForm, CoachAttendanceForm, LocationForm, MainExpenseForm,
-  SessionForm, ExtraClassForm,
+  SessionForm,
 } from './pages/RecordForms';
+import { ExtraClassForm } from './pages/ExtraClassForm';
 import { RegistrationForm } from './pages/RegistrationForm';
 import { PrivatePackageForm } from './pages/PrivatePackageForm';
 import { PaymentForm } from './pages/PaymentForm';
@@ -51,11 +52,12 @@ import { PayrollSheetPage } from './pages/PayrollSheetPage';
 import { AddonFormPage } from './pages/AddonFormPage';
 import { AttendanceSummaryPage, AttendanceDetailsPage } from './pages/AttendanceReports';
 import { FeedbackDashboardPage } from './pages/FeedbackDashboardPage';
-import { TakeAttendancePage } from './pages/TakeAttendancePage';
+import { TakeAttendancePage, ClassLatestAttendanceRedirect } from './pages/TakeAttendancePage';
 import { CoachSchedulePage } from './pages/CoachSchedulePage';
 import { PrivateAttendancePage } from './pages/PrivateAttendancePage';
 import { ExtraAttendancePage } from './pages/ExtraAttendancePage';
 import { GenerateSessionsPage } from './pages/GenerateSessionsPage';
+import { GenerateClassesPage } from './pages/GenerateClassesPage';
 import { ChecklistPage } from './pages/ChecklistPage';
 import { PayrollHoursPage } from './pages/PayrollHoursPage';
 import {
@@ -162,6 +164,7 @@ export default function App() {
           <Route path="/schedule" element={<GSchedulePage />} />
           <Route path="/pr-schedule" element={<PrSchedulePage />} />
           <Route path="/registrations" element={<RegistrationsPage />} />
+          <Route path="/registrations-not-renewed" element={<NotRenewedPage />} />
           <Route path="/registrations/new" element={<RegistrationForm />} />
           <Route path="/registrations/:id" element={<RegistrationForm />} />
           <Route path="/sessions" element={<SessionsPage />} />
@@ -187,12 +190,15 @@ export default function App() {
           <Route path="/extra-classes" element={<ExtraClassesPage />} />
           <Route path="/extra-classes/new" element={<ExtraClassForm />} />
           <Route path="/extra-classes/:id" element={<ExtraClassForm />} />
-          <Route path="/extra-attendance" element={<ExtraAttendancePage />} />
+          <Route path="/extra-attendance" element={<ExtraAttendancePage key="extra" />} />
+          <Route path="/m-attendance" element={<ExtraAttendancePage key="members" memberships />} />
           <Route path="/members" element={<MembershipsPage />} />
           <Route path="/coaches" element={<CoachesPage />} />
           <Route path="/coaches/:id" element={<CoachForm />} />
           <Route path="/coaches/:id/schedule" element={<CoachSchedulePage />} />
           <Route path="/classes" element={<ClassesPage />} />
+          <Route path="/classes/generate" element={<GenerateClassesPage />} />
+          <Route path="/classes/:classId/attendance" element={<ClassLatestAttendanceRedirect />} />
           <Route path="/classes/:id" element={<ClassForm />} />
           <Route path="/semesters" element={<SemestersPage />} />
           <Route path="/semesters/:id" element={<SemesterForm />} />

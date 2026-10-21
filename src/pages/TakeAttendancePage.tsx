@@ -1,27 +1,45 @@
-// Take Attendance, the simple marking flow the legacy
-// ClassesSessionsAttendanceList.aspx wrapped in thirty controls:
-// tap a student to flip Present/Absent, add a remark where needed, Save.
-// Status defaults to Normal; the dropdown appears per row for the exceptions
-// (Late / MakeUp / No Suit / Miss Land Training). Make-up visitors from other
-// sessions show highlighted and read-only, exactly like legacy.
+// Take Attendance, port of ClassesSessionsAttendanceList.aspx: tap a student to
+// flip Present/Absent, set the status / remark / location per row, Save.
+// Everything the legacy grid offered is here:
+// - header "Class: … on dd/mm/yyyy [RemarksObligatoryForAbsent]", "N Records";
+// - Refresh Current Students, Update (save), Export;
+// - Bulk Update (status and/or location onto every row, then Update);
+// - per row: student (→ attendance details), date, attended, status, make-up
+//   info / "Choose Make Up Session" (status MakeUp), remarks, location,
+//   DuePercent, Add Payment;
+// - row tints: attended green, has make-up lime, make-up visitor from another
+//   session yellow and read-only (its location stays editable, as in legacy);
+// - classes flagged ClassObligatoryRemarksWhenAbsent refuse to save while a
+//   Normal-status absentee has no remark;
+// - picking a make-up session saves the grid and reloads it (legacy
+//   Refresh_GridView → BtnUpdate).
+// Proc: P_Classes_Sessions_Attendance_Select — keys AttendanceId,
+// AttendanceSessionId, AttendanceMakeUpSessionID, StudentId, MakeUpDate, Mode.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Loader2, AlertCircle, Save, Check, X, Users, RefreshCw, CheckCircle2,
+  Loader2, AlertCircle, Save, Check, X, Users, RefreshCw, CheckCircle2, Download, CreditCard,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
 import { SmartBack } from '../components/SmartBack';
+import { isoToday } from '../lib/groupClasses';
 
 type Row = Record<string, unknown>;
+type Opt = { value: number; label: string };
 
 const STATUSES = ['Normal', 'Late', 'MakeUp', 'No Suit', 'Miss Land Training'];
 
 const num = (r: Row, k: string) => Number(r[k] ?? 0);
 const str = (r: Row, k: string) => (r[k] == null ? '' : String(r[k]));
+const toIso = (v: unknown) => {
+  const d = v ? new Date(String(v)) : null;
+  if (!d || isNaN(d.getTime()) || d.getFullYear() < 1901) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 interface Mark { attended: boolean; status: string; remarks: string; locationId: number }
 
@@ -32,12 +50,21 @@ export function TakeAttendancePage() {
 
   const [rows, setRows] = useState<Row[]>([]);
   const [marks, setMarks] = useState<Record<number, Mark>>({});
+  const [locations, setLocations] = useState<Opt[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [makeupFor, setMakeupFor] = useState<{ id: number; name: string } | null>(null);
+  const [makeupFor, setMakeupFor] = useState<Row | null>(null);
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkLocation, setBulkLocation] = useState(0);
+
+  useEffect(() => {
+    apiRequest<{ locations: Opt[] }>('/api/portal/modules/lookups')
+      .then((lk) => setLocations(lk.locations ?? []))
+      .catch(() => {});
+  }, []);
 
   function hydrate(data: Row[]) {
     setRows(data);
@@ -76,13 +103,14 @@ export function TakeAttendancePage() {
   }
 
   const sid = Number(sessionId);
-  // Make-up visitors belong to another session, shown, never edited or saved (legacy rule).
+  // Make-up visitors belong to another session: shown read-only (legacy rule).
   const isVisitor = (r: Row) => num(r, 'AttendanceSessionId') !== 0 && num(r, 'AttendanceSessionId') !== sid;
 
   const header = rows[0];
   const className = header ? str(header, 'ClassName') : '';
   const sessionDate = toDMY(header?.SessionDate, '');
   const remarksRequired = rows.some((r) => r.ClassObligatoryRemarksWhenAbsent === true);
+  const locationName = (id: number) => locations.find((l) => l.value === id)?.label ?? '';
 
   const counts = useMemo(() => {
     let present = 0, absent = 0, total = 0;
@@ -112,9 +140,29 @@ export function TakeAttendancePage() {
     setSavedAt(null);
   }
 
-  async function save() {
-    // Legacy gate: classes flagged ClassObligatoryRemarksWhenAbsent refuse to
-    // save while a Normal-status absentee has no remark.
+  // Legacy BtnBulkUpate_Click: the chosen status and/or location onto every
+  // row (status only where the row is editable); saving is still "Update".
+  function bulkUpdate() {
+    if (!bulkStatus && !bulkLocation) return;
+    setMarks((prev) => {
+      const next = { ...prev };
+      for (const r of rows) {
+        const id = num(r, 'AttendanceId');
+        next[id] = {
+          ...next[id],
+          ...(bulkStatus && !isVisitor(r) ? { status: bulkStatus } : {}),
+          ...(bulkLocation ? { locationId: bulkLocation } : {}),
+        };
+      }
+      return next;
+    });
+    setSavedAt(null);
+  }
+
+  /** Legacy BtnUpdate_Click: validate, then one update per row. */
+  async function save(): Promise<boolean> {
+    // Classes flagged ClassObligatoryRemarksWhenAbsent refuse to save while a
+    // Normal-status absentee has no remark.
     if (remarksRequired) {
       const missing = rows.filter((r) => {
         if (isVisitor(r)) return false;
@@ -122,34 +170,64 @@ export function TakeAttendancePage() {
         return m && !m.attended && m.status.toLowerCase() === 'normal' && m.remarks.trim() === '';
       });
       if (missing.length > 0) {
-        setError(`Remarks are required for absent students in this class, missing for: ${missing.map((r) => str(r, 'StudentFullName')).join(', ')}`);
-        return;
+        setError(`Can not save, Remarks is missing for absent students: ${missing.map((r) => str(r, 'StudentFullName')).join(', ')}`);
+        return false;
       }
     }
     setSaving(true);
     setError('');
     try {
-      const payload = rows
-        .filter((r) => !isVisitor(r))
-        .map((r) => ({ attendanceId: num(r, 'AttendanceId'), ...marks[num(r, 'AttendanceId')] }));
+      // Every row goes back like the legacy grid; visitors keep their own
+      // marks (read-only here) and only their location can have changed.
+      const payload = rows.map((r) => ({ attendanceId: num(r, 'AttendanceId'), ...marks[num(r, 'AttendanceId')] }));
       await apiRequest('/api/portal/attendance/save', {
         method: 'POST',
         body: JSON.stringify({ sessionId: sid, marks: payload }),
       });
       setSavedAt(new Date());
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save attendance.');
+      return false;
     } finally {
       setSaving(false);
     }
   }
 
+  async function saveAndReload() {
+    if (await save()) load();
+  }
+
+  function exportCsv() {
+    const cols = ['Student', 'Date', 'Attended', 'Status', 'MakeupInfo', 'Remarks', 'Location', 'DuePercent'];
+    const lines = rows.map((r) => {
+      const m = marks[num(r, 'AttendanceId')];
+      return [
+        str(r, 'StudentFullName'), toDMY(r.SessionDate, ''), m?.attended ? 'True' : 'False', m?.status ?? '',
+        str(r, 'MakeupInfo'), m?.remarks ?? '', locationName(m?.locationId ?? 0), str(r, 'DuePercent'),
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    });
+    const blob = new Blob([[cols.join(','), ...lines].join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const d = new Date();
+    a.download = `ClassesSessionsAttendance_${d.getFullYear()}_${String(d.getMonth() + 1).padStart(2, '0')}_${String(d.getDate()).padStart(2, '0')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  const smallSel = 'rounded-lg border border-slate-200 bg-white px-1.5 py-1 text-xs disabled:bg-slate-50 disabled:text-slate-400';
+
   return (
-    <div className="p-6 md:p-8 max-w-3xl">
+    <div className="p-6 md:p-8 max-w-4xl">
       <SmartBack label="Sessions" fallback="/sessions" />
       <PageHero
-        title={className ? `${className}` : 'Take Attendance'}
-        subtitle={sessionDate ? `Session of ${sessionDate}` : 'Mark who attended'}
+        title={className ? `Class: ${className}` : 'Take Attendance'}
+        subtitle={[
+          sessionDate ? `on ${sessionDate}` : 'Mark who attended',
+          remarksRequired ? '[RemarksObligatoryForAbsent]' : '',
+          !loading ? `${rows.length} Records` : '',
+        ].filter(Boolean).join('  ·  ')}
         slide={2}
       />
 
@@ -170,7 +248,7 @@ export function TakeAttendancePage() {
             <button onClick={refreshStudents} disabled={refreshing}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-semibold px-5 py-2 disabled:opacity-50">
               {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-              Load registered students
+              Refresh Current Students
             </button>
           )}
         </div>
@@ -193,12 +271,39 @@ export function TakeAttendancePage() {
                   All absent
                 </button>
                 <button onClick={refreshStudents} disabled={refreshing} title="Sync newly registered students into this session"
-                  className="rounded-lg border border-slate-200 text-slate-600 text-xs font-bold px-3 py-1.5 hover:border-[#1e5c97]/40 disabled:opacity-50">
+                  className="flex items-center gap-1 rounded-lg border border-slate-200 text-slate-600 text-xs font-bold px-3 py-1.5 hover:border-[#1e5c97]/40 disabled:opacity-50">
                   {refreshing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                  Refresh Current Students
                 </button>
               </>
             )}
+            {user?.canExport && (
+              <button onClick={exportCsv}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 text-[#1e5c97] text-xs font-bold px-3 py-1.5 hover:bg-slate-50">
+                <Download className="size-3.5" /> Export
+              </button>
+            )}
           </div>
+
+          {/* Bulk Update (legacy txtStatusBulk + ddlLocationsBulk) */}
+          {canSave && (
+            <div className="flex flex-wrap items-center gap-2 mb-3 bg-white rounded-xl border border-slate-100 p-2.5 text-xs text-slate-500">
+              Bulk Update:
+              <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} className={smallSel}>
+                <option value="">Not Selected</option>
+                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <select value={bulkLocation} onChange={(e) => setBulkLocation(Number(e.target.value))} className={smallSel}>
+                <option value={0}>Not Selected</option>
+                {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+              </select>
+              <button onClick={bulkUpdate} disabled={!bulkStatus && !bulkLocation}
+                className="rounded-lg border border-[#1e5c97]/30 text-[#1e5c97] font-bold px-3 py-1 hover:bg-slate-50 disabled:opacity-40">
+                Bulk Update
+              </button>
+              <span className="text-slate-400">After Bulk update, you need to UPDATE (Save).</span>
+            </div>
+          )}
 
           {/* Roster, tap the row to flip Present/Absent */}
           <div className="space-y-2 mb-24">
@@ -207,14 +312,18 @@ export function TakeAttendancePage() {
               const m = marks[id];
               if (!m) return null;
               const visitor = isVisitor(r);
+              const makeupInfo = str(r, 'MakeupInfo');
+              const hasMakeup = makeupInfo.length > 1;
+              const due = r.DuePercent;
               return (
                 <div key={id}
                   className={`rounded-xl border p-3 transition-colors ${
-                    visitor ? 'bg-[#FAFAB4]/60 border-amber-200'
-                    : m.attended ? 'bg-emerald-50 border-emerald-200'
+                    visitor ? 'bg-[#FAFAB4]/70 border-amber-200'
+                    : hasMakeup ? 'bg-[#C8F06E]/40 border-lime-300'
+                    : m.attended ? 'bg-[#00CC66]/15 border-emerald-200'
                     : 'bg-red-50/70 border-red-200'
                   }`}>
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
                     <button
                       disabled={visitor || !canSave}
                       onClick={() => setMark(id, { attended: !m.attended })}
@@ -225,52 +334,84 @@ export function TakeAttendancePage() {
                     >
                       {m.attended ? <Check className="size-5" /> : <X className="size-5" />}
                     </button>
-                    <button
-                      disabled={visitor || !canSave}
-                      onClick={() => setMark(id, { attended: !m.attended })}
-                      className="flex-1 text-left min-w-0"
-                    >
-                      <p className="text-sm font-bold text-slate-800 truncate">{str(r, 'StudentFullName')}</p>
+                    <div className="flex-1 min-w-40">
+                      <Link
+                        to={`/attendance-details?search=${encodeURIComponent(str(r, 'StudentFullName'))}`}
+                        target="_blank"
+                        className="text-sm font-bold text-slate-800 hover:text-[#1e5c97] hover:underline truncate block"
+                        title="Attendance details"
+                      >
+                        {str(r, 'StudentFullName')}
+                      </Link>
                       <p className="text-xs text-slate-500">
-                        {visitor ? 'Make-up visitor from another session'
-                          : m.attended ? 'Present' : 'Absent'}
-                        {num(r, 'DuePercent') > 0 && <span className="text-amber-600"> · payment due</span>}
-                        {str(r, 'MakeupInfo').length > 1 && <span className="text-lime-700"> · {str(r, 'MakeupInfo')}</span>}
+                        {toDMY(r.SessionDate, '')}
+                        {' · '}
+                        {visitor ? 'Make-up visitor from another session' : m.attended ? 'Present' : 'Absent'}
+                        {due != null && due !== '' && <span className={Number(due) > 0 ? 'text-amber-700 font-semibold' : ''}> · Due {String(due)}%</span>}
                       </p>
-                    </button>
-                    {!visitor && (
-                      <select
-                        value={m.status}
-                        disabled={!canSave}
-                        onChange={(e) => setMark(id, { status: e.target.value })}
-                        className={`shrink-0 rounded-lg border px-1.5 py-1 text-xs ${
-                          m.status !== 'Normal' ? 'border-amber-300 bg-amber-50 font-semibold' : 'border-slate-200 bg-white/70'
-                        }`}
-                      >
-                        {STATUSES.map((s2) => <option key={s2} value={s2}>{s2}</option>)}
-                      </select>
-                    )}
-                    {!visitor && canSave && (
-                      <button
-                        onClick={() => setMakeupFor({ id, name: str(r, 'StudentFullName') })}
-                        className="shrink-0 rounded-lg border border-lime-300 bg-lime-50 px-2 py-1 text-xs font-semibold text-lime-700 hover:bg-lime-100"
-                        title="Assign a make-up session"
-                      >
-                        Make-up
-                      </button>
-                    )}
+                    </div>
+                    <select
+                      value={m.status}
+                      disabled={visitor || !canSave}
+                      onChange={(e) => setMark(id, { status: e.target.value })}
+                      className={`shrink-0 rounded-lg border px-1.5 py-1 text-xs disabled:opacity-70 ${
+                        m.status !== 'Normal' ? 'border-amber-300 bg-amber-50 font-semibold' : 'border-slate-200 bg-white/70'
+                      }`}
+                      title="Status"
+                    >
+                      {STATUSES.map((s2) => <option key={s2} value={s2}>{s2}</option>)}
+                      {!STATUSES.includes(m.status) && <option value={m.status}>{m.status}</option>}
+                    </select>
+                    <select
+                      value={m.locationId}
+                      disabled={!canSave}
+                      onChange={(e) => setMark(id, { locationId: Number(e.target.value) })}
+                      className={`${smallSel} shrink-0 max-w-32`}
+                      title="Location"
+                    >
+                      <option value={0}>Not Selected</option>
+                      {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                    </select>
+                    <Link
+                      to={`/payments/new?studentId=${num(r, 'StudentId')}&studentName=${encodeURIComponent(str(r, 'StudentFullName'))}`}
+                      target="_blank"
+                      className="shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-[#1e5c97] hover:underline"
+                      title="Add Payment"
+                    >
+                      <CreditCard className="size-3.5" /> Add Payment
+                    </Link>
                   </div>
-                  {!visitor && (!m.attended || m.remarks) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {/* MakeupInfo link (opens the make-up picker on the current one), or
+                        "Choose Make Up Session" once the status is MakeUp (legacy txtStatus_Change). */}
+                    {hasMakeup ? (
+                      <button
+                        disabled={visitor || !canSave}
+                        onClick={() => setMakeupFor(r)}
+                        className="shrink-0 text-xs font-semibold text-lime-800 hover:underline disabled:no-underline disabled:cursor-default"
+                        title={visitor ? undefined : 'Change the make-up session'}
+                      >
+                        {makeupInfo}
+                      </button>
+                    ) : !visitor && canSave && m.status.toLowerCase() === 'makeup' ? (
+                      <button
+                        onClick={() => setMakeupFor(r)}
+                        className="shrink-0 rounded-lg border border-lime-300 bg-lime-50 px-2 py-1 text-xs font-semibold text-lime-700 hover:bg-lime-100"
+                      >
+                        Choose Make Up Session
+                      </button>
+                    ) : null}
                     <input
                       value={m.remarks}
-                      disabled={!canSave}
+                      disabled={visitor || !canSave}
                       onChange={(e) => setMark(id, { remarks: e.target.value })}
-                      placeholder={remarksRequired && !m.attended ? 'Remark required for absence…' : 'Remark (optional)…'}
-                      className={`mt-2 w-full rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40 ${
-                        remarksRequired && !m.attended && m.remarks.trim() === '' ? 'border-red-300' : 'border-slate-200'
+                      placeholder={remarksRequired && !m.attended ? 'Remark required for absence…' : 'Remarks…'}
+                      className={`flex-1 min-w-40 rounded-lg border px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40 disabled:bg-white/50 ${
+                        remarksRequired && !visitor && !m.attended && m.status.toLowerCase() === 'normal' && m.remarks.trim() === ''
+                          ? 'border-red-300' : 'border-slate-200'
                       }`}
                     />
-                  )}
+                  </div>
                 </div>
               );
             })}
@@ -288,10 +429,10 @@ export function TakeAttendancePage() {
                 </span>
               )}
               <div className="flex-1" />
-              <button onClick={save} disabled={saving}
+              <button onClick={saveAndReload} disabled={saving}
                 className="flex items-center gap-2 rounded-xl bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-bold px-8 py-2.5 disabled:opacity-50">
                 {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                Save Attendance
+                Update
               </button>
             </div>
           )}
@@ -300,45 +441,70 @@ export function TakeAttendancePage() {
 
       {makeupFor && (
         <MakeupModal
-          attendanceId={makeupFor.id}
-          studentName={makeupFor.name}
+          row={makeupFor}
           onClose={() => setMakeupFor(null)}
-          onAssigned={() => { setMakeupFor(null); load(); }}
+          // Legacy: the popup refreshes its opener via BtnUpdate, i.e. the grid
+          // is saved (with the MakeUp status just picked) and reloaded.
+          onAssigned={() => { setMakeupFor(null); void saveAndReload(); }}
         />
       )}
     </div>
   );
 }
 
-// Pick a date, list the eligible sessions that day, assign one as the make-up.
-function MakeupModal({ attendanceId, studentName, onClose, onAssigned }: {
-  attendanceId: number; studentName: string; onClose: () => void; onAssigned: () => void;
+// /classes/:classId/attendance, legacy ClassesSessionsAttendanceList.aspx?ClassID=
+// (opened from the registrations list): jump to the class's latest session,
+// or to the sessions list when it has none.
+export function ClassLatestAttendanceRedirect() {
+  const { classId } = useParams<{ classId: string }>();
+  const navigate = useNavigate();
+  useEffect(() => {
+    apiRequest<{ sessionId: number }>(`/api/portal/attendance/class/${Number(classId) || 0}/last-session`)
+      .then((r) => navigate(r.sessionId ? `/sessions/${r.sessionId}/attendance` : '/sessions', { replace: true }))
+      .catch(() => navigate('/sessions', { replace: true }));
+  }, [classId, navigate]);
+  return (
+    <div className="flex items-center justify-center h-64"><Loader2 className="size-8 text-[#1e5c97] animate-spin" /></div>
+  );
+}
+
+// ClassesSessionsAttendanceMakeUp.aspx: student, "MakeUp For: class ON date",
+// MakeUp Date (the current make-up's date, else today), MakeUp Session
+// (sessions that day in the same semester, "Not Selected" clears it), Save.
+function MakeupModal({ row, onClose, onAssigned }: {
+  row: Row; onClose: () => void; onAssigned: () => void;
 }) {
-  const [date, setDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
+  const attendanceId = num(row, 'AttendanceId');
+  const current = num(row, 'AttendanceMakeUpSessionID');
+  const [date, setDate] = useState(() => toIso(row.MakeUpDate) || isoToday());
   const [sessions, setSessions] = useState<Row[]>([]);
+  const [picked, setPicked] = useState(current);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!date) { setSessions([]); return; }
     setLoading(true);
     setError('');
     apiRequest<Row[]>(`/api/portal/attendance/makeup-sessions?date=${date}&attendanceId=${attendanceId}`)
-      .then(setSessions)
+      .then((s) => {
+        setSessions(s);
+        // A date change rebinds the list (legacy keeps "Not Selected" unless
+        // the current make-up session is in it).
+        setPicked((p) => (s.some((x) => num(x, 'SessionId') === p) ? p : 0));
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load sessions.'))
       .finally(() => setLoading(false));
   }, [date, attendanceId]);
 
-  async function assign(sessionId: number) {
+  async function saveChanges() {
     setBusy(true);
     setError('');
     try {
       await apiRequest('/api/portal/attendance/makeup', {
         method: 'POST',
-        body: JSON.stringify({ attendanceId, makeupSessionId: sessionId }),
+        body: JSON.stringify({ attendanceId, makeupSessionId: picked }),
       });
       onAssigned();
     } catch (e) {
@@ -347,38 +513,44 @@ function MakeupModal({ attendanceId, studentName, onClose, onAssigned }: {
     }
   }
 
+  const original = `${str(row, 'ClassName')}${row.SessionDate ? ` ON ${toDMY(row.SessionDate, '')}` : ''}`;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-bold text-slate-800">Make-up for {studentName}</h3>
+          <h3 className="text-base font-bold text-slate-800">Make-up</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="size-5" /></button>
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-500 mb-3">
-          Date
-          <DateInput value={date} onChange={(e) => setDate(e.target.value)}
-            className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40" />
-        </label>
+        <dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm mb-3">
+          <dt className="text-slate-500">Student</dt><dd className="font-semibold text-slate-800">{str(row, 'StudentFullName')}</dd>
+          <dt className="text-slate-500">MakeUp For</dt><dd className="text-slate-700">{original}</dd>
+          <dt className="text-slate-500 self-center">MakeUp Date</dt>
+          <dd>
+            <DateInput value={date} onChange={(e) => setDate(e.target.value)}
+              className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40" />
+          </dd>
+          <dt className="text-slate-500 self-center">MakeUp Session</dt>
+          <dd>
+            {loading ? <Loader2 className="size-5 text-[#1e5c97] animate-spin" /> : (
+              <select value={picked} onChange={(e) => setPicked(Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm">
+                <option value={0}>Not Selected</option>
+                {sessions.map((s) => (
+                  <option key={num(s, 'SessionId')} value={num(s, 'SessionId')}>{str(s, 'SessionDesc') || str(s, 'ClassName')}</option>
+                ))}
+              </select>
+            )}
+          </dd>
+        </dl>
         {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
-        {loading ? (
-          <div className="flex items-center justify-center h-24"><Loader2 className="size-6 text-[#1e5c97] animate-spin" /></div>
-        ) : sessions.length === 0 ? (
-          <p className="text-sm text-slate-400 py-6 text-center">No eligible sessions on this date.</p>
-        ) : (
-          <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-            {sessions.map((s) => (
-              <button
-                key={num(s, 'SessionId')}
-                disabled={busy}
-                onClick={() => assign(num(s, 'SessionId'))}
-                className="w-full text-left py-2.5 px-2 hover:bg-lime-50 disabled:opacity-50 rounded"
-              >
-                <span className="text-sm font-semibold text-slate-700">{str(s, 'ClassName')}</span>
-                <span className="text-xs text-slate-400"> · {str(s, 'SessionStatus')}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex justify-end">
+          <button onClick={saveChanges} disabled={busy || loading}
+            className="btn-grad flex items-center gap-1.5 rounded-lg text-sm font-semibold px-5 py-2 disabled:opacity-60">
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            Save Changes
+          </button>
+        </div>
       </div>
     </div>
   );

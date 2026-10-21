@@ -1,31 +1,34 @@
-// Multi-session generate (ClassesSessionsIndividualMulti.aspx). Pick a semester
-// + date; the classes scheduled that day appear as a checklist; generate creates
-// one session per checked class on that date, skipping any that already exist.
+// Multi-session generate (ClassesSessionsIndividualMulti.aspx). Location →
+// semester (opens on the location's current one) + date (today) + status; the
+// classes held that weekday load at once (legacy AutoPostBack) as a checklist:
+// ticked, except classes that already have a session that day (shown unticked
+// and disabled, legacy PopulateClasses). Generate creates one session per
+// ticked class on the date (audited "Class Session Insert"), skipping any that
+// exist meanwhile.
 
 import { useEffect, useState } from 'react';
 import { Loader2, CalendarPlus, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
+import { SmartBack } from '../components/SmartBack';
 import { toast } from '../components/Toast';
+import { isoToday } from '../lib/groupClasses';
 
 type Opt = { value: number; label: string };
-interface ClassRow { ClassID: number; ClassName: string }
-
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+interface ClassRow { ClassID: number; ClassName: string; SessionExists?: boolean }
 
 export function GenerateSessionsPage() {
   const user = getStoredUser();
-  const canSave = user?.userType?.toLowerCase() !== 'guest' && user?.canSave !== false;
+  const role = (user?.userType || '').toLowerCase();
+  const canSave = role !== 'guest' && user?.canSave !== false;
+  const locationLocked = role === 'user';
 
   const [locations, setLocations] = useState<Opt[]>([]);
   const [semesters, setSemesters] = useState<Opt[]>([]);
   const [locationId, setLocationId] = useState(user?.primaryLocationId || 0);
   const [semesterId, setSemesterId] = useState(0);
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(isoToday());
   const [status, setStatus] = useState('Active');
   const [remarks, setRemarks] = useState('');
 
@@ -53,24 +56,27 @@ export function GenerateSessionsPage() {
           .map((s) => ({ value: Number(s.SemesterId ?? s.SemesterID ?? 0), label: String(s.SemesterName ?? '') }))
           .filter((o) => o.value > 0);
         setSemesters(opts);
-        setSemesterId(r.currentSemesterId || Number(opts[0]?.value) || 0);
+        setSemesterId(r.currentSemesterId || 0);
       })
       .catch(() => setSemesters([]));
   }, [locationId]);
 
-  function loadClasses() {
-    if (!semesterId) { setError('Pick a semester first.'); return; }
+  function loadClasses(keepResult = false) {
+    if (!keepResult) setResult(null);
+    if (!semesterId || !date) { setClasses([]); setChecked(new Set()); return; }
     setLoading(true);
     setError('');
-    setResult(null);
     apiRequest<ClassRow[]>(`/api/portal/modules/classes-for-multi?semesterId=${semesterId}&date=${date}`)
       .then((data) => {
         setClasses(data);
-        setChecked(new Set(data.map((c) => c.ClassID))); // default: all checked
+        // Legacy: every class ticked unless it already has a session that day.
+        setChecked(new Set(data.filter((c) => !c.SessionExists).map((c) => c.ClassID)));
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load classes.'))
       .finally(() => setLoading(false));
   }
+  // Semester or date change reloads the checklist (legacy AutoPostBack).
+  useEffect(() => { loadClasses(); }, [semesterId, date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggle(id: number) {
     setChecked((old) => {
@@ -91,6 +97,7 @@ export function GenerateSessionsPage() {
       });
       setResult(r);
       toast.success(`${r.generated} session(s) generated${r.skipped ? `, ${r.skipped} skipped` : ''}.`);
+      loadClasses(true); // the new sessions now show as existing
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Generation failed.';
       setError(m); toast.error(m);
@@ -100,29 +107,40 @@ export function GenerateSessionsPage() {
   }
 
   const selectCls =
-    'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
+    'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40 disabled:bg-slate-50 disabled:text-slate-400';
+  const open = classes.filter((c) => !c.SessionExists);
 
   return (
     <div className="p-6 max-w-3xl">
       <PageHero title="Generate Sessions" subtitle="Add a session to several classes on one date" />
+      <SmartBack label="Sessions" fallback="/sessions" />
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 mb-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <select value={locationId} onChange={(e) => setLocationId(Number(e.target.value))} className={selectCls}>
-            <option value={0}>All locations</option>
-            {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-          </select>
-          <select value={semesterId} onChange={(e) => setSemesterId(Number(e.target.value))} className={selectCls}>
-            <option value={0}>Semester…</option>
-            {semesters.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            Location
+            <select value={locationId} disabled={locationLocked} onChange={(e) => setLocationId(Number(e.target.value))} className={selectCls}>
+              <option value={0}>Not Selected</option>
+              {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            Semester
+            <select value={semesterId} onChange={(e) => setSemesterId(Number(e.target.value))} className={selectCls}>
+              <option value={0}>Not Selected</option>
+              {semesters.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
           <label className="flex items-center gap-1 text-xs text-slate-500">
             Date
             <DateInput value={date} onChange={(e) => setDate(e.target.value)} className={selectCls} />
           </label>
-          <button onClick={loadClasses} className="btn-grad rounded-lg text-xs font-semibold px-4 py-1.5">
-            Load classes
-          </button>
+          <label className="flex items-center gap-1 text-xs text-slate-500">
+            Status
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectCls}>
+              {['Active', 'Cancelled', 'Make-Up'].map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
         </div>
       </div>
 
@@ -149,17 +167,19 @@ export function GenerateSessionsPage() {
         <div className="bg-white rounded-2xl border border-slate-100 shadow-soft p-4">
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
-              {classes.length} classes on this date · {checked.size} selected
+              {classes.length} classes on this date · {classes.length - open.length} already have a session · {checked.size} selected
             </p>
             <div className="flex gap-2">
-              <button onClick={() => setChecked(new Set(classes.map((c) => c.ClassID)))} className="text-xs font-semibold text-[#1e5c97] hover:underline">All</button>
+              <button onClick={() => setChecked(new Set(open.map((c) => c.ClassID)))} className="text-xs font-semibold text-[#1e5c97] hover:underline">All</button>
               <button onClick={() => setChecked(new Set())} className="text-xs font-semibold text-slate-500 hover:underline">None</button>
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-1 max-h-96 overflow-y-auto">
             {classes.map((c) => (
-              <label key={c.ClassID} className="flex items-center gap-2 text-sm text-slate-700 py-1 px-2 rounded hover:bg-slate-50 select-none">
-                <input type="checkbox" checked={checked.has(c.ClassID)} onChange={() => toggle(c.ClassID)} className="accent-[#1e5c97]" />
+              <label key={c.ClassID}
+                className={`flex items-center gap-2 text-sm py-1 px-2 rounded select-none ${c.SessionExists ? 'text-slate-300' : 'text-slate-700 hover:bg-slate-50'}`}
+                title={c.SessionExists ? 'A session already exists for this class on this date' : undefined}>
+                <input type="checkbox" disabled={c.SessionExists} checked={checked.has(c.ClassID)} onChange={() => toggle(c.ClassID)} className="accent-[#1e5c97]" />
                 {c.ClassName}
               </label>
             ))}
@@ -167,9 +187,6 @@ export function GenerateSessionsPage() {
 
           {canSave && (
             <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-slate-100">
-              <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectCls}>
-                {['Active', 'Cancelled', 'Make-Up'].map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
               <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks (optional)" className={`${selectCls} flex-1 min-w-40`} />
               <button
                 onClick={generate}
@@ -183,7 +200,9 @@ export function GenerateSessionsPage() {
           )}
         </div>
       ) : (
-        <p className="text-sm text-slate-400 px-1">Pick a semester and date, then load the classes scheduled that day.</p>
+        <p className="text-sm text-slate-400 px-1">
+          {semesterId ? 'No classes are held on this weekday in the selected semester.' : 'Pick a semester and a date.'}
+        </p>
       )}
     </div>
   );

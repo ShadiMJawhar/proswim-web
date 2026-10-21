@@ -31,7 +31,12 @@ export interface ColumnDef {
   totalBy?: string;
   /** Only these user types (lower-case) see this column's total. */
   totalRoles?: string[];
+  /** Hide the column for the current filters / user type, e.g. the legacy
+   *  Due report hiding Phone/Total/Paid/OnHold outside the user's location. */
+  hiddenWhen?: (values: FilterValues, role: string) => boolean;
 }
+
+export type FilterValues = Record<string, string | number | boolean>;
 
 export interface FilterOption { value: string | number; label: string }
 
@@ -56,6 +61,21 @@ export interface FilterDef {
   /** User types (case-insensitive) for which the filter is shown but locked to
    *  its initial value, e.g. ['user'] for the legacy ddlLocations.Enabled=false. */
   lockedFor?: string[];
+  /** Shown but not editable for the current filters / user type (keeps its
+   *  value), e.g. the Due report's "Only Due" outside the user's location. */
+  disabledWhen?: (values: FilterValues, role: string) => boolean;
+  /** Side effects of a user change on other filters (legacy postback rules),
+   *  e.g. picking semesters moves "From" to the first semester's month.
+   *  `semesterRows` are the cascade's raw semester rows. */
+  derive?: (next: FilterValues, ctx: { semesterRows: Row[]; role: string }) => FilterValues;
+  /** Dependent option list (legacy cascaded dropdowns, e.g. the coaches of the
+   *  chosen location): `url` is re-evaluated from the current filter values and
+   *  a changed URL refetches; `pick` maps the response (default FilterOption[]).
+   *  A value the refreshed list no longer offers falls back to "all". */
+  optionsFrom?: { url: (values: FilterValues) => string | null; pick?: (res: unknown) => FilterOption[] };
+  /** With optionsFrom: an empty value takes the list's first option (legacy
+   *  DropDownList DataBind selecting its first item, no "Not Selected" row). */
+  firstByDefault?: boolean;
 }
 
 export interface ModuleConfig {
@@ -71,7 +91,18 @@ export interface ModuleConfig {
   rowClass?: (row: Row) => string;
   /** Summary shown next to the row count, computed over ALL loaded rows
    *  (e.g. legacy "of total : [LBP x] AND [USD y]"). */
-  summary?: { roles?: string[]; text: (rows: Row[]) => string };
+  summary?: { roles?: string[]; text: (rows: Row[], values: FilterValues) => string;
+    /** Text before the summary (default "of total : "). */
+    prefix?: string };
+  /** Multi-location cascade (legacy RadComboBox location + semester lists):
+   *  semesters come from /modules/semester-options for the picked locations and
+   *  the preselection follows the legacy rule ('upcoming' semester(s)). */
+  semesterPick?: 'upcoming' | 'current';
+  /** false disables Add New for the current filters (legacy BtnAddNew.Enabled). */
+  canAddNew?: (values: FilterValues, role: string) => boolean;
+  /** false makes the row Edit button refuse with the legacy "You do not have
+   *  permission to do this action" alert (legacy _AccessReadOnly). */
+  canEditRows?: (values: FilterValues, role: string) => boolean;
   /** Base route for add/edit forms (e.g. "/semesters"). Enables Add New + row Edit. */
   editBase?: string;
   /** Filter params forwarded to the Add New form as query params (e.g.
@@ -80,6 +111,9 @@ export interface ModuleConfig {
   /** Named optional column sets, each with its own checkbox in the filter bar
    *  (e.g. the legacy "Feedback" columns). `roles` limits who sees the toggle. */
   columnGroups?: { key: string; label: string; roles?: string[] }[];
+  /** Extra header buttons built from the loaded rows (proc order) and the
+   *  current filter values, e.g. the private list's feedback stats prints. */
+  actions?: (rows: Row[], values: Record<string, string | number | boolean>) => React.ReactNode;
 }
 
 const PAGE_SIZE = 50;
@@ -99,9 +133,11 @@ function totalsBy(rows: Row[], col: ColumnDef): string {
 }
 
 /** Checkbox-dropdown filter (legacy RadComboBox CheckBoxes + Check All). */
-function MultiSelect({ label, options, value, width, onChange }: {
+function MultiSelect({ label, options, value, width, onChange, disabled }: {
   label: string; options: FilterOption[]; value: string; width?: string;
   onChange: (next: string) => void;
+  /** lockedFor: shown but not editable (legacy ddlLocations_MS.Enabled=false). */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const picked = new Set(value.split(',').map((s) => s.trim()).filter(Boolean));
@@ -123,7 +159,8 @@ function MultiSelect({ label, options, value, width, onChange }: {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={`${width || 'w-40'} rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 text-left truncate focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40`}
+        disabled={disabled}
+        className={`${width || 'w-40'} rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 text-left truncate focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40 disabled:bg-slate-50 disabled:text-slate-400`}
         title={summary}
       >
         {summary}
@@ -257,14 +294,22 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   // being replaced by the location's current semester (so deep-links land right).
   const urlSemester = semesterParam ? searchParams.get(semesterParam) : null;
   const pendingUrlSemester = useRef(urlSemester && /^\d+$/.test(urlSemester) ? Number(urlSemester) : 0);
+  // Multiselect semesters (semesterPick): a present URL value ("1,3" or "")
+  // is restored as-is once, absent means "use the legacy preselection".
+  const multiSemester = config.filters.find((f) => f.param === semesterParam)?.type === 'multiselect';
+  const pendingUrlSemesters = useRef<string | null>(multiSemester ? urlSemester : null);
+  const semesterRows = useRef<Row[]>([]);
 
   const locValue = locationParam ? values[locationParam] : undefined;
   useEffect(() => {
     if (!cascades) return;
-    apiRequest<{ semesters: Row[]; currentSemesterId: number }>(
-      `/api/portal/schedule/semesters?locationId=${Number(locValue) || 0}`
+    apiRequest<{ semesters: Row[]; currentSemesterId?: number; selectedIds?: string }>(
+      config.semesterPick
+        ? `/api/portal/modules/semester-options?locationIds=${encodeURIComponent(String(locValue ?? ''))}&pick=${config.semesterPick}`
+        : `/api/portal/schedule/semesters?locationId=${Number(locValue) || 0}`
     )
       .then((r) => {
+        semesterRows.current = r.semesters ?? [];
         const opts = (r.semesters ?? [])
           .map((s) => ({ value: semesterId(s), label: String(s.SemesterName ?? '') }))
           .filter((o) => o.value > 0);
@@ -272,14 +317,59 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         // Consume a URL semester once; afterwards follow the location's current.
         const urlSem = pendingUrlSemester.current;
         pendingUrlSemester.current = 0;
-        const sem = (urlSem && opts.some((o) => o.value === urlSem) ? urlSem : 0)
-          || r.currentSemesterId || Number(opts[0]?.value) || 0;
+        const urlSems = pendingUrlSemesters.current;
+        pendingUrlSemesters.current = null;
+        const sem: string | number = multiSemester
+          ? (urlSems ?? r.selectedIds ?? '')
+          : (urlSem && opts.some((o) => o.value === urlSem) ? urlSem : 0)
+            || Number(String(r.selectedIds ?? '').split(',')[0]) // single-select semesterPick
+            || r.currentSemesterId || Number(opts[0]?.value) || 0;
         const next = { ...valuesRef.current, [semesterParam!]: sem };
         setValues(next);
         load(next);
       })
       .catch(() => setSemOptions(null));
   }, [locValue, cascades]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Dependent option lists (FilterDef.optionsFrom) ─────────────────────────
+  // Each filter's URL is recomputed from the current values; only a changed URL
+  // refetches. A stale response (URL moved on meanwhile) is dropped. When the new
+  // list no longer offers the selected value it falls back to "all" and the grid
+  // reloads (legacy DataBind reset the dropdown to "Not Selected"). A null URL
+  // (e.g. no semester yet) empties the list but keeps the value, so deep-links
+  // survive until the cascade resolves.
+  const [depOptions, setDepOptions] = useState<Record<string, FilterOption[]>>({});
+  const depUrls = useRef<Record<string, string>>({});
+  const depKey = config.filters.map((f) => (f.optionsFrom ? f.optionsFrom.url(values) ?? '' : '')).join('|');
+  useEffect(() => {
+    for (const f of config.filters) {
+      if (!f.optionsFrom) continue;
+      const url = f.optionsFrom.url(valuesRef.current) ?? '';
+      if (depUrls.current[f.param] === url) continue;
+      depUrls.current[f.param] = url;
+      if (!url) { setDepOptions((d) => ({ ...d, [f.param]: [] })); continue; }
+      apiRequest<unknown>(url)
+        .then((res) => {
+          if (depUrls.current[f.param] !== url) return;
+          const opts = f.optionsFrom!.pick ? f.optionsFrom!.pick(res) : (Array.isArray(res) ? res as FilterOption[] : []);
+          setDepOptions((d) => ({ ...d, [f.param]: opts }));
+          const cur = valuesRef.current[f.param];
+          const empty = cur === '' || cur === 0 || cur == null;
+          if (!empty && opts.some((o) => String(o.value) === String(cur))) return;
+          if (f.firstByDefault && opts.length) {
+            const first = { ...valuesRef.current, [f.param]: opts[0].value };
+            setValues(first);
+            load(first);
+            return;
+          }
+          if (empty) return;
+          const next = { ...valuesRef.current, [f.param]: typeof cur === 'number' ? 0 : '' };
+          setValues(next);
+          load(next);
+        })
+        .catch(() => {});
+    }
+  }, [depKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function buildQuery(v: Record<string, string | number | boolean>): string {
     const q = new URLSearchParams();
@@ -340,7 +430,8 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const groupAllowed = (c: ColumnDef) => !c.group || groups.some((g) => g.key === c.group);
   const pickable = (c: ColumnDef) => !!c.label && !c.key.startsWith('_');
   const defaultShown = (c: ColumnDef) => !c.extra && !c.group;
-  const cols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c))));
+  const cols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c)))
+    && !c.hiddenWhen?.(values, userRole));
   const pickerSections: PickerSection[] = [
     { title: 'Columns', columns: config.columns.filter((c) => pickable(c) && !c.extra && !c.group) },
     { title: 'More columns', columns: config.columns.filter((c) => pickable(c) && c.extra && !c.group) },
@@ -380,12 +471,13 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         subtitle={
           (loading ? 'Loading…' : `${sorted.length.toLocaleString()} rows`) +
           (!loading && config.summary && roleOk(config.summary.roles) && sorted.length
-            ? ` · of total : ${config.summary.text(sorted)}` : '') +
+            ? ` · ${config.summary.prefix ?? 'of total : '}${config.summary.text(sorted, values)}` : '') +
           (config.subtitle ? ` · ${config.subtitle}` : '')
         }
         slide={config.title.length % 4}
         right={
           <div className="flex items-center gap-2">
+            {!loading && config.actions?.(rows, values)}
             {canEdit && (
               <button
                 onClick={() => {
@@ -397,7 +489,9 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                   }
                   navigate(`${config.editBase}/new${q.toString() ? `?${q}` : ''}`);
                 }}
-                className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5"
+                disabled={config.canAddNew?.(values, userRole) === false}
+                title={config.canAddNew?.(values, userRole) === false ? 'Not available for the selected locations' : undefined}
+                className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="size-3.5" /> Add New
               </button>
@@ -427,12 +521,14 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         {config.filters.filter((f) => roleOk(f.roles)).map((f) => {
           const val = values[f.param];
           const set = (nv: string | number | boolean) => {
-            const next = { ...values, [f.param]: nv };
+            let next: FilterValues = { ...values, [f.param]: nv };
+            if (f.derive) next = f.derive(next, { semesterRows: semesterRows.current, role: userRole });
             setValues(next);
             // Opt-in filters (e.g. Location on payroll) apply on change, no Search click.
             if (f.autoSubmit) load(next);
           };
-          const locked = !!f.lockedFor?.some((t) => t.toLowerCase() === (user?.userType || '').toLowerCase());
+          const locked = !!f.lockedFor?.some((t) => t.toLowerCase() === (user?.userType || '').toLowerCase())
+            || !!f.disabledWhen?.(values, userRole);
           switch (f.type) {
             case 'multiselect':
               return (
@@ -440,9 +536,10 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                   key={f.param}
                   label={f.label}
                   width={f.width}
-                  options={f.options ?? lookups[f.optionsKey || ''] ?? []}
+                  options={(semOptions && f.param === semesterParam ? semOptions : null) ?? f.options ?? lookups[f.optionsKey || ''] ?? []}
                   value={String(val ?? '')}
                   onChange={set}
+                  disabled={locked}
                 />
               );
             case 'text':
@@ -475,6 +572,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             case 'select': {
               const opts =
                 (semOptions && f.param === semesterParam ? semOptions : null) ??
+                (f.optionsFrom ? depOptions[f.param] ?? [] : null) ??
                 f.options ?? lookups[f.optionsKey || ''] ?? [];
               return (
                 <select
@@ -548,7 +646,14 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                     {canEdit && (
                       <td className="px-3 py-2.5 text-right">
                         <button
-                          onClick={() => navigate(`${config.editBase}/${rowId(r, config.idKey)}`)}
+                          onClick={() => {
+                            // Legacy _AccessReadOnly: the Edit link refuses with an alert.
+                            if (config.canEditRows?.(values, userRole) === false) {
+                              window.alert('You do not have permission to do this action');
+                              return;
+                            }
+                            navigate(`${config.editBase}/${rowId(r, config.idKey)}`);
+                          }}
                           title="Edit"
                           className="text-[#1e5c97] hover:text-[#17497a]"
                         >

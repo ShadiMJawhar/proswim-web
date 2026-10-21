@@ -142,7 +142,9 @@ export function PrivateAttendancePage() {
   const user = getStoredUser();
   const userType = (user?.userType || '').toLowerCase();
   const canSave = userType !== 'guest' && user?.canSave !== false;
-  const locationLocked = userType === 'user' && !!user?.primaryLocationId;
+  // Legacy PopulateDataSources: ddlLocations_MS.Enabled = false for every
+  // 'user' account (pinned to the own location, or "all" when it has none).
+  const locationLocked = userType === 'user';
   const [params, setParams] = useSearchParams();
 
   // Filters live in the URL. Legacy query-string aliases are honoured as
@@ -150,12 +152,18 @@ export function PrivateAttendancePage() {
   //   ?date=        one day (the schedule's day headers)
   //   ?locationId=  a single location
   //   ?criteria=    a criteria deep link also unticks "Only Active" (Page_Load)
+  //   ?year=&month= the whole month (ReportsByPrivate drill-down)
+  //   ?startDate= / ?endDate=  override the range (applied last in Page_Load)
   const monday = mondayOfWeek(new Date());
   const deepDate = params.get('date') || '';
-  const dateFrom = params.get('dateFrom') ?? (deepDate || fmtISO(monday));
-  const dateTo = params.get('dateTo') ?? (deepDate || fmtISO(addDays(monday, 5)));
+  const qYear = Number(params.get('year')), qMonth = Number(params.get('month'));
+  const hasMonth = qYear > 0 && qMonth >= 1 && qMonth <= 12;
+  const monthFrom = hasMonth ? fmtISO(new Date(qYear, qMonth - 1, 1)) : '';
+  const monthTo = hasMonth ? fmtISO(new Date(qYear, qMonth, 0)) : '';
+  const dateFrom = params.get('dateFrom') ?? (toDateInput(params.get('startDate')) || monthFrom || deepDate || fmtISO(monday));
+  const dateTo = params.get('dateTo') ?? (toDateInput(params.get('endDate')) || monthTo || deepDate || fmtISO(addDays(monday, 5)));
   const locationIds = locationLocked
-    ? String(user?.primaryLocationId)
+    ? (user?.primaryLocationId ? String(user.primaryLocationId) : '')
     : params.get('locationIds') ?? params.get('locationId') ?? (user?.primaryLocationId ? String(user.primaryLocationId) : '');
   const criteria = params.get('criteria') ?? '';
   const onlyActive = params.has('onlyActive') ? params.get('onlyActive') === 'true' : !params.has('criteria');
@@ -221,6 +229,24 @@ export function PrivateAttendancePage() {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [locOpen]);
+
+  // Legacy AutoPostBack: every filter reloads the grid on change. The location
+  // combo (RadComboBox with check boxes) posts back once it closes, so reload
+  // when the picker closes with a different selection than it opened with.
+  const latest = useRef(current);
+  latest.current = current;
+  const locAtOpen = useRef<string | null>(null);
+  useEffect(() => {
+    if (locOpen) { locAtOpen.current = latest.current.locationIds; return; }
+    if (locAtOpen.current !== null && locAtOpen.current !== latest.current.locationIds) load(latest.current);
+    locAtOpen.current = null;
+  }, [locOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  function applyFilter(obj: Partial<Filters>) {
+    patch(obj);
+    // A cleared date is not applied until a full date is typed again.
+    if (obj.dateFrom === '' || obj.dateTo === '') return;
+    load({ ...current, ...obj });
+  }
 
   const selectedLocs = locationIds.split(',').map(Number).filter((n) => n > 0);
   function toggleLoc(id: number) {
@@ -345,12 +371,15 @@ export function PrivateAttendancePage() {
   }
 
   // Legacy GVResult_RowDataBound: attended rows green; the row whose time (or
-  // make-up time, when the make-up date is today) is in the current hour bold.
+  // make-up time, when the make-up date is the page's _SpecificDate = ?date=
+  // or today) is in the current hour bold. Legacy matched the hour as a
+  // substring of the time text (hour 5 also hit 15:xx and xx:15); the exact
+  // hour is compared here.
   const now = new Date();
-  const todayISO = fmtISO(now);
+  const specificISO = deepDate ? deepDate.slice(0, 10) : fmtISO(now);
   function rowStyle(r: Row): React.CSSProperties {
     const bold = r.PrivateSessionMkupDate
-      ? r.PrivateSessionMkupDate === todayISO && hourOf(r.PrivateSessionMkupTime) === now.getHours()
+      ? r.PrivateSessionMkupDate === specificISO && hourOf(r.PrivateSessionMkupTime) === now.getHours()
       : hourOf(r.PrivateSessionTime) === now.getHours();
     return {
       backgroundColor: r.PrivateSessionAttended ? 'rgb(0,204,102)' : undefined,
@@ -435,17 +464,17 @@ export function PrivateAttendancePage() {
         </div>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           From
-          <DateInput value={dateFrom} onChange={(e) => patch({ dateFrom: e.target.value })} className={inputCls} />
+          <DateInput value={dateFrom} onChange={(e) => applyFilter({ dateFrom: e.target.value })} className={inputCls} />
         </label>
         <label className="flex items-center gap-1 text-xs text-slate-500">
           To
-          <DateInput value={dateTo} onChange={(e) => patch({ dateTo: e.target.value })} className={inputCls} />
+          <DateInput value={dateTo} onChange={(e) => applyFilter({ dateTo: e.target.value })} className={inputCls} />
         </label>
-        <select value={criteria} onChange={(e) => patch({ criteria: e.target.value })} className={inputCls}>
+        <select value={criteria} onChange={(e) => applyFilter({ criteria: e.target.value })} className={inputCls}>
           {CRITERIA.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
         <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
-          <input type="checkbox" checked={onlyActive} onChange={(e) => patch({ onlyActive: e.target.checked })} className="accent-[#1e5c97]" />
+          <input type="checkbox" checked={onlyActive} onChange={(e) => applyFilter({ onlyActive: e.target.checked })} className="accent-[#1e5c97]" />
           Show Only Active Packs
         </label>
         <button type="submit" className="btn-grad ml-auto rounded-lg text-xs font-semibold px-4 py-1.5">
@@ -529,6 +558,10 @@ export function PrivateAttendancePage() {
                         onChange={(e) => set(r.PrivateSessionId, 'PrivateSessionMkupTime', e.target.value)}
                         className={inputCls}>
                         {MKUP_TIMES.map((t) => <option key={t || '-'} value={t}>{t}</option>)}
+                        {/* A stored time outside the 15-minute list stays visible (and is saved back as is). */}
+                        {!MKUP_TIMES.includes(r.PrivateSessionMkupTime) && (
+                          <option value={r.PrivateSessionMkupTime}>{r.PrivateSessionMkupTime}</option>
+                        )}
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
@@ -537,6 +570,11 @@ export function PrivateAttendancePage() {
                         className={`${inputCls} w-28`}>
                         <option value={0}>Not Selected</option>
                         {coaches.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                        {/* Legacy binds every coach (Coach_Select()); the lookup lists active ones,
+                            so an inactive make-up coach is added from the row's CoachMkup name. */}
+                        {r.PrivateSessionMkupCoachID > 0 && !coaches.some((c) => c.value === r.PrivateSessionMkupCoachID) && (
+                          <option value={r.PrivateSessionMkupCoachID}>{r.CoachMkup || `#${r.PrivateSessionMkupCoachID}`}</option>
+                        )}
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
@@ -545,12 +583,16 @@ export function PrivateAttendancePage() {
                         className={`${inputCls} w-24`}>
                         <option value={0}>Not Selected</option>
                         {locations.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                        {r.PrivateSessionLocationID > 0 && !locations.some((l) => l.value === r.PrivateSessionLocationID) && (
+                          <option value={r.PrivateSessionLocationID}>#{r.PrivateSessionLocationID}</option>
+                        )}
                       </select>
                     </td>
                     <td className="px-2 py-1.5 text-slate-500">{r.PackageNamewInfo}</td>
                     <td className="px-2 py-1.5 text-slate-500">{r.PackageStatus}</td>
                     <td className="px-2 py-1.5">
-                      <Link to={`/privates/${r.PackageId}`} className="font-bold text-[#1e5c97] hover:underline">Pck</Link>
+                      {/* Legacy opened the package in a popup, keeping unsaved attendance edits. */}
+                      <Link to={`/privates/${r.PackageId}`} target="_blank" rel="noopener" className="font-bold text-[#1e5c97] hover:underline">Pck</Link>
                     </td>
                   </tr>
                 );

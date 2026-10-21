@@ -26,7 +26,7 @@ const ICONS: Record<string, Icon> = {
   '/payments': CreditCard, '/payments-due': CreditCard, '/payment-delivery': Truck,
   '/expenses': Receipt, '/main-expenses': Receipt,
   '/pr-schedule': CalendarDays, '/pr-attendance': ClipboardCheck, '/privates': GraduationCap, '/pr-payments': CreditCard,
-  '/extra-classes': BookOpen, '/extra-attendance': ClipboardCheck, '/members': UserRound,
+  '/extra-classes': BookOpen, '/extra-attendance': ClipboardCheck, '/members': UserRound, '/m-attendance': ClipboardCheck,
   '/ex-payments': CreditCard, '/m-payments': CreditCard,
   '/change-requests': Inbox, '/session-changes/approve': ClipboardCheck, '/session-changes/manual': CalendarX,
   '/news': Newspaper, '/announcements': Megaphone,

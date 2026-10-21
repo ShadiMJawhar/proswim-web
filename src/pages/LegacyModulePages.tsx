@@ -63,13 +63,15 @@ const packTypes: ModuleConfig = {
     { param: 'locationId', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-44', autoSubmit: true, lockedFor: ['user'] },
   ],
   columns: [
+    // Legacy GVResult columns and header texts, in order; the currency was not
+    // a legacy column, so it is an opt-in extra.
     { key: 'PrivatePackageName', label: 'Package Name' },
-    { key: 'PrivatePackageCurrency', label: 'Curr' },
-    { key: 'PrivatePackagePriceForOneStudent', label: 'For One', format: 'money' },
-    { key: 'PrivatePackagePriceForTwoStudents', label: 'For Two', format: 'money' },
-    { key: 'PrivatePackagePriceForThreeStudents', label: 'For Three', format: 'money' },
-    { key: 'PrivatePackageSessionsCount', label: 'Sessions' },
+    { key: 'PrivatePackagePriceForOneStudent', label: 'PriceForOneStudent', format: 'money' },
+    { key: 'PrivatePackagePriceForTwoStudents', label: 'PriceForTwoStudent', format: 'money' },
+    { key: 'PrivatePackagePriceForThreeStudents', label: 'PriceForThreeStudent', format: 'money' },
+    { key: 'PrivatePackageSessionsCount', label: 'Count' },
     { key: 'PrivatePackageActive', label: 'Active', format: 'bool' },
+    { key: 'PrivatePackageCurrency', label: 'Curr', extra: true },
   ],
 };
 

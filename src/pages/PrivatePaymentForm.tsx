@@ -47,7 +47,13 @@ const s = (v: unknown) => (v == null ? '' : String(v));
 const n = (v: unknown) => (v == null || v === '' ? 0 : Number(v));
 const money = (v: number) => Math.round(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
 const dateOnly = (v: unknown) => { const str = s(v); return str.length >= 10 ? str.slice(0, 10) : ''; };
-const today = () => new Date().toISOString().slice(0, 10);
+// Local calendar day (toISOString is UTC and gives yesterday just after midnight in Beirut).
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+// Legacy RadNumericTextBox DecimalDigits=0 / int.Parse: amounts and rate are whole numbers.
+const whole = (v: string) => (v.trim() === '' ? 0 : Math.round(Number(v)) || 0);
 
 /** Opens the invoice HTML in a new tab and prints it. The window is opened by
  * the caller synchronously (pop-up blockers), we only fill it here. */
@@ -80,6 +86,11 @@ export function PrivatePaymentForm() {
   const [packageLocked, setPackageLocked] = useState(presetPackage > 0 || !isNew);
 
   const [locationId, setLocationId] = useState(n(params.get('locationId')) || user?.primaryLocationId || 0);
+  // Legacy Add New passed the list's location selection (?LocationID=hdnLocsIds):
+  // the package dropdown lists that selection's packages, while the pay location
+  // stays on the user's own location. Without it, follow the pay location.
+  const listLocationIds = (params.get('locationIds') ?? '').split(',').map(Number).filter((x) => x > 0).join(',');
+  const packageLocations = listLocationIds || String(locationId);
   const [packageId, setPackageId] = useState(presetPackage);
   const [ctx, setCtx] = useState<Context | null>(null);
   const [emailPick, setEmailPick] = useState<Record<string, boolean>>({});
@@ -89,6 +100,9 @@ export function PrivatePaymentForm() {
   const [currency, setCurrency] = useState('USD');
   const [rate, setRate] = useState(0);
   const [paidAmount, setPaidAmount] = useState(0);
+  // Saved payment: legacy shows the stored LBP figure and only recomputes it
+  // once the amount, currency or rate is changed (txtPaidAmount_TextChanged).
+  const [storedTotal, setStoredTotal] = useState<number | null>(null);
   const [method, setMethod] = useState<Method>('cash');
   const [number, setNumber] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -102,8 +116,8 @@ export function PrivatePaymentForm() {
 
   // Legacy txtPaidAmount_TextChanged: LBP → same figure; USD → floor(paid × rate).
   const totalAmount = useMemo(
-    () => (currency === 'LBP' ? paidAmount : Math.floor(paidAmount * rate)),
-    [currency, paidAmount, rate],
+    () => storedTotal ?? (currency === 'LBP' ? paidAmount : Math.floor(paidAmount * rate)),
+    [storedTotal, currency, paidAmount, rate],
   );
 
   useEffect(() => {
@@ -112,19 +126,23 @@ export function PrivatePaymentForm() {
       .catch(() => {});
   }, []);
 
-  // Location → open packages with a due balance (new, unlocked only) + current rate.
+  // Open packages with a due balance (new, unlocked only).
   useEffect(() => {
     if (isNew && !packageLocked) {
-      apiRequest<Picker[]>(`/api/portal/edit/package-search?locationIds=${locationId}&onlyWithDue=true`)
+      apiRequest<Picker[]>(`/api/portal/edit/package-search?locationIds=${packageLocations}&onlyWithDue=true`)
         .then(setPackages)
         .catch(() => setPackages([]));
     }
+  }, [packageLocations, isNew, packageLocked]);
+
+  // Current USD rate of the pay location (new payments).
+  useEffect(() => {
     if (isNew) {
       apiRequest<{ rate: number }>(`/api/portal/edit/currency-rate?locationId=${locationId}`)
         .then((r) => setRate((cur) => cur || r.rate))
         .catch(() => {});
     }
-  }, [locationId, isNew, packageLocked]);
+  }, [locationId, isNew]);
 
   // Existing payment.
   useEffect(() => {
@@ -139,6 +157,7 @@ export function PrivatePaymentForm() {
         setCurrency(s(r.PrivatePaymentPaidCurrency) || 'USD');
         setRate(n(r.PrivatePaymentPaidCurrencyRate));
         setPaidAmount(n(r.PrivatePaymentPaidAmount));
+        setStoredTotal(n(r.PrivatePaymentTotalAmount));
         setMethod(r.PrivatePaymentCC === true ? 'cc' : r.PrivatePaymentChq === true ? 'chq' : r.PrivatePaymentOthers === true ? 'others' : 'cash');
         setNumber(s(r.PrivatePaymentNumber));
         setRemarks(s(r.PrivatePaymentRemarks));
@@ -169,10 +188,10 @@ export function PrivatePaymentForm() {
   const isExtra = packageId >= EXTRA_FLOOR;
 
   function validate(): string | null {
-    if (!packageId) return 'Choose a package first.';
+    if (!packageId) return 'Please Choose a Package to Add Payment For';
     if (!issuedTo.trim()) return 'Issued To is required.';
     if (!date) return 'The payment date is required.';
-    if (!rate || rate < 100) return 'Set the USD to LBP currency rate.';
+    if (!rate || rate < 100) return 'Please fill in currency rate';
     if (bal?.hasPayments && bal.due > 0 && paidAmount > bal.due && totalAmount > bal.due && (paidAmount < 2000 || totalAmount < 2000))
       return 'Amount higher than Due.';
     if (totalAmount === 0 && userType === 'user') return 'Amount Can not be Zero, Contact Site Admin';
@@ -367,18 +386,18 @@ export function PrivatePaymentForm() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className={labelCls}>Paid amount</label>
-              <input type="number" min={0} value={paidAmount} onChange={(e) => setPaidAmount(Number(e.target.value))} className={inputCls} disabled={!canEdit} />
+              <input type="number" min={0} step={1} value={paidAmount} onChange={(e) => { setStoredTotal(null); setPaidAmount(whole(e.target.value)); }} className={inputCls} disabled={!canEdit} />
             </div>
             <div>
               <label className={labelCls}>Currency</label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls} disabled={!canEdit}>
+              <select value={currency} onChange={(e) => { setStoredTotal(null); setCurrency(e.target.value); }} className={inputCls} disabled={!canEdit}>
                 <option value="USD">USD</option>
                 <option value="LBP">LBP</option>
               </select>
             </div>
             <div>
               <label className={labelCls}>USD to LBP rate</label>
-              <input type="number" min={0} value={rate} onChange={(e) => setRate(Number(e.target.value))} className={inputCls} disabled={!canEdit} />
+              <input type="number" min={0} step={1} value={rate} onChange={(e) => { setStoredTotal(null); setRate(whole(e.target.value)); }} className={inputCls} disabled={!canEdit} />
             </div>
             <div>
               <label className={labelCls}>LBP amount</label>

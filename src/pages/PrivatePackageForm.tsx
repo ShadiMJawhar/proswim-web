@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Save, Search, X, CalendarPlus, Printer, Link2, Unlink } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
@@ -43,8 +43,30 @@ type SessionRow = {
 };
 
 const STUDENT_SLOTS = [0, 1, 2] as const;
-const PACKAGE_STATUSES = ['Active', 'Closed', 'ClosedNeedPayment', 'MovedtoGroup', 'Freeze', 'Cancelled', 'Transfer'];
-const FOLLOW_UPS = ['', 'Renewing', 'Renewed', 'Leaving', 'MovedtoGroup'];
+// Legacy txtPackageStatus / txtPackageFollowup items (values + texts, in order).
+const PACKAGE_STATUSES = [
+  { value: 'Active', label: 'Active' },
+  { value: 'Closed', label: 'Closed' },
+  { value: 'ClosedNeedPayment', label: 'Closed Need Payment' },
+  { value: 'MovedtoGroup', label: 'MovedtoGroup' },
+  { value: 'Freeze', label: 'Freeze' },
+  { value: 'Cancelled', label: 'Cancelled' },
+  { value: 'Transfer', label: 'Transfer' },
+];
+const FOLLOW_UPS = [
+  { value: '', label: '-' },
+  { value: 'Renewing', label: 'Renewing' },
+  { value: 'Renewed', label: 'Renewed' },
+  { value: 'Leaving', label: 'Leaving' },
+  { value: 'MovedtoGroup', label: 'Moved to Group' },
+];
+// Legacy FormatAnswerNumber2Text / FormatAnswerGetColor (feedback answers).
+const ANSWER_TEXT: Record<string, string> = {
+  '0': '0 - No Answer', '1': '1 - Bad', '2': '2 - Fair', '3': '3 - Good', '4': '4 - V. Good', '5': '5 - Excellent',
+};
+const ANSWER_COLOR: Record<string, string> = {
+  '0': '#e5371b', '1': '#e5371b', '2': '#e58c1b', '3': '#f6ebab', '4': '#c1ce19', '5': '#788014',
+};
 // Legacy txtPackageLevel: fixed private levels (not the group P_Level_Select list).
 const LEVELS = [
   { value: '', label: '-' },
@@ -87,11 +109,22 @@ const localToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
-// Legacy RowDataBound: date/time are locked once the session is older than yesterday.
+// Legacy RowDataBound: date/time are locked once the session date (local
+// midnight) is earlier than now minus one day.
 const isLockedDate = (iso: string) => {
-  const d = new Date(iso);
+  const d = new Date(`${iso}T00:00:00`);
   return !isNaN(d.getTime()) && d.getTime() < Date.now() - 24 * 3600 * 1000;
 };
+// "ddd dd-MM-yyyy" (legacy feedback dates).
+const fmtDayDate = (v: unknown) => {
+  const str = s(v);
+  if (str.length < 10) return '';
+  const d = new Date(`${str.slice(0, 10)}T00:00:00`);
+  if (isNaN(d.getTime())) return '';
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  return `${day} ${str.slice(8, 10)}-${str.slice(5, 7)}-${str.slice(0, 4)}`;
+};
+const isWholeNumber = (v: number) => Number.isInteger(v) && v >= 0;
 const escapeHtml = (v: string) =>
   v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -165,12 +198,17 @@ export function PrivatePackageForm() {
   const [parentOptions, setParentOptions] = useState<PackLink[] | null>(null);
   const [children, setChildren] = useState<PackLink[]>([]);
 
-  // student search (one active slot at a time)
+  // student pickers (one active slot at a time) over the legacy ddlStudents
+  // source: the private swimmers of the chosen location.
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
   const [q, setQ] = useState('');
-  const [results, setResults] = useState<Picker[]>([]);
-  const [searching, setSearching] = useState(false);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [privateStudents, setPrivateStudents] = useState<Picker[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+
+  // legacy LtrStudentProfileandHistory (profile, history, feedback)
+  const [history, setHistory] = useState<{
+    student: Row | null; registrations: Row[]; packages: Row[]; feedback: Row | null; studentId: number;
+  } | null>(null);
 
   // sessions
   const [sessionRows, setSessionRows] = useState<SessionRow[]>([]);
@@ -191,11 +229,12 @@ export function PrivatePackageForm() {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const loadedType = useRef(false); // avoid auto-fill clobbering a loaded record
 
   const isClosed = savedStatus === 'Closed';
+  // Legacy ShowDataToEdit on a Closed package: Save Changes stays enabled only
+  // for SiteMaster; the session buttons are disabled for everyone.
   const canSavePackage = canSave && (!isClosed || isSiteMaster);
-  const canTouchSessions = canSave && !isNew && (!isClosed || isSiteMaster);
+  const canTouchSessions = canSave && !isNew && !isClosed;
   const lockLocation = userType === 'user';
 
   // Lookups: locations, all coaches (make-up coach picker), per-location coaches + package types
@@ -212,8 +251,18 @@ export function PrivatePackageForm() {
 
   useEffect(() => {
     apiRequest<{ coaches: Option[] }>(`/api/portal/modules/lookups?locationId=${locationId}`)
-      .then((lk) => setCoaches(lk.coaches))
+      .then((lk) => {
+        setCoaches(lk.coaches);
+        // Legacy ddlCoaches is rebound per location without a "Not Selected"
+        // item, so a new package starts on the location's first coach.
+        if (isNew) setCoachId((cur) => (lk.coaches.some((c) => c.value === cur) ? cur : lk.coaches[0]?.value ?? 0));
+      })
       .catch(() => {});
+    setStudentsLoading(true);
+    apiRequest<Picker[]>(`/api/portal/edit/private-package/students?locationId=${locationId}`)
+      .then(setPrivateStudents)
+      .catch(() => setPrivateStudents([]))
+      .finally(() => setStudentsLoading(false));
     apiRequest<Row[]>(`/api/portal/edit/package-types?locationId=${locationId}`)
       .then((rows) =>
         setTypes(
@@ -231,7 +280,7 @@ export function PrivatePackageForm() {
         )
       )
       .catch(() => setTypes([]));
-  }, [locationId]);
+  }, [locationId, isNew]);
 
   // ?studentId= prefill for a new package (legacy Request.QueryString["StudentID"]).
   useEffect(() => {
@@ -258,6 +307,13 @@ export function PrivatePackageForm() {
     apiRequest<Row[]>(`/api/portal/edit/private-package/${packageId}/payments`).then(setPayments).catch(() => setPayments([]));
   }
 
+  function loadHistory() {
+    if (!packageId) return;
+    apiRequest<{ student: Row | null; registrations: Row[]; packages: Row[]; feedback: Row | null; studentId: number }>(
+      `/api/portal/edit/private-package/${packageId}/history`
+    ).then(setHistory).catch(() => setHistory(null));
+  }
+
   function loadLinks(parent: number) {
     if (!packageId) return;
     apiRequest<PackLink[]>(`/api/portal/edit/private-package/${packageId}/children`).then(setChildren).catch(() => setChildren([]));
@@ -269,7 +325,6 @@ export function PrivatePackageForm() {
   }
 
   function applyRecord(r: Row) {
-    loadedType.current = true;
     setLocationId(n(r.PackageLocationId));
     setPackageName(s(r.PackageName));
     setCoachId(n(r.PackageCoachId));
@@ -305,39 +360,36 @@ export function PrivatePackageForm() {
         applyRecord(r);
         loadSessions();
         loadPayments();
+        loadHistory();
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load package.'))
       .finally(() => setLoading(false));
   }, [packageId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced student search
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (q.trim().length < 2) { setResults([]); return; }
-    setSearching(true);
-    searchTimer.current = setTimeout(() => {
-      apiRequest<Picker[]>(`/api/portal/edit/student-search?q=${encodeURIComponent(q.trim())}`)
-        .then(setResults)
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
-    }, 300);
-  }, [q]);
+  // Type-ahead over the location's private swimmers (every word must match).
+  const results = useMemo(() => {
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const list = words.length === 0 ? privateStudents
+      : privateStudents.filter((p) => { const l = p.label.toLowerCase(); return words.every((w) => l.includes(w)); });
+    return list.slice(0, 100);
+  }, [q, privateStudents]);
 
-  const studentCount = useMemo(() => studentIds.filter((v) => v > 0).length, [studentIds]);
   const selectedType = useMemo(() => types.find((t) => t.name === packageName), [types, packageName]);
   // Legacy rule: only package types whose name contains "custom" let the user
   // edit the sessions count and amount; the rest come from the price catalogue.
   const isCustom = packageName.toLowerCase().includes('custom');
 
-  useEffect(() => {
-    if (!selectedType) return;
-    if (loadedType.current) { loadedType.current = false; return; }
-    setCurrency(selectedType.currency);
-    setSessions(selectedType.sessions);
-    const price =
-      studentCount >= 3 ? selectedType.price3 : studentCount === 2 ? selectedType.price2 : selectedType.price1;
-    setAmount(price);
-  }, [selectedType, studentCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Legacy ddlPackages_SelectedIndexChanged, run when the package or a student
+  // changes (never on load): sessions + the 1/2/3-student price of the type.
+  // The currency only matters on insert (Package_Update has no currency).
+  function applyType(name: string, ids: number[]) {
+    const t = types.find((x) => x.name === name);
+    if (!t) return;
+    const count = ids.filter((v) => v > 0).length;
+    setSessions(t.sessions);
+    setAmount(count >= 3 ? t.price3 : count === 2 ? t.price2 : t.price1);
+    if (isNew) setCurrency(t.currency);
+  }
 
   useEffect(() => {
     setNetToPay(amount - discount);
@@ -347,19 +399,22 @@ export function PrivatePackageForm() {
     if (activeSlot == null) return;
     // Legacy ddlStudentsN_SelectedIndexChanged: identical students are rejected.
     if (studentIds.some((v, i) => i !== activeSlot && v === p.id)) {
-      toast.error('You have chosen identical students, please correct.');
+      toast.error('You Have Chosen Identical Students, Please Correct');
       return;
     }
-    setStudentIds((prev) => prev.map((v, i) => (i === activeSlot ? p.id : v)));
+    const ids = studentIds.map((v, i) => (i === activeSlot ? p.id : v));
+    setStudentIds(ids);
     setStudentLabels((prev) => prev.map((v, i) => (i === activeSlot ? p.label : v)));
     setActiveSlot(null);
     setQ('');
-    setResults([]);
+    applyType(packageName, ids);
   }
 
   function clearStudent(slot: number) {
-    setStudentIds((prev) => prev.map((v, i) => (i === slot ? 0 : v)));
+    const ids = studentIds.map((v, i) => (i === slot ? 0 : v));
+    setStudentIds(ids);
     setStudentLabels((prev) => prev.map((v, i) => (i === slot ? '' : v)));
+    applyType(packageName, ids);
   }
 
   // ── Parent / child links ─────────────────────────────────────────────────
@@ -382,26 +437,27 @@ export function PrivatePackageForm() {
 
   // ── Save ─────────────────────────────────────────────────────────────────
   async function save() {
-    if (!studentIds.some((v) => v > 0)) { setError('No student is chosen, please correct.'); return; }
-    if (!packageName) { setError('No package is chosen, please correct.'); return; }
-    if (!level.trim()) { setError('No level is chosen, please correct.'); return; }
+    // Legacy page validators (Required / dd/mm/yyyy / "Num" = digits only),
+    // then the BtnSaveChanges_Click checks in the same order.
+    if (!startDate) { setError('Start Date: Required.'); return; }
+    if (!isWholeNumber(sessions)) { setError('Sessions #: Num (whole number).'); return; }
+    if (!isWholeNumber(amount)) { setError('Amount: Num (whole number).'); return; }
+    if (!isWholeNumber(discount)) { setError('Discount: Num (whole number).'); return; }
+    if (!studentIds.some((v) => v > 0)) { setError('No Student is chosen, Please Correct'); return; }
+    if (!packageName) { setError('No Package is chosen, Please Correct'); return; }
+    if (!level.trim()) { setError('No Level is chosen, Please Correct'); return; }
     setSaving(true);
     setError('');
 
     try {
-      if (isNew) {
-        // Legacy PackageStudentCheck_Select: warn when an open package exists.
-        const open: string[] = [];
-        for (const [i, sid] of studentIds.entries()) {
-          if (!sid) continue;
-          const r = await apiRequest<{ count: number }>(
-            `/api/portal/edit/private-package/open-for-student?locationId=${locationId}&studentId=${sid}`
-          );
-          if (r.count > 0) open.push(studentLabels[i] || `Student #${sid}`);
-        }
-        if (open.length > 0 && !window.confirm(
-          `Please note that another open package already exists for ${open.join(', ')}.\nContinue and add this package anyway?`
-        )) { setSaving(false); return; }
+      if (isNew && studentIds[0] > 0) {
+        // Legacy PackageStudentCheck_Select (location + student 1): a notice
+        // only, the insert always goes ahead ("WE WILL CONTINUE TO ADD").
+        const r = await apiRequest<{ count: number }>(
+          `/api/portal/edit/private-package/open-for-student?locationId=${locationId}&studentId=${studentIds[0]}`
+        ).catch(() => ({ count: 0 }));
+        if (r.count > 0)
+          toast.error('Please note that another Open package already exists for the same student(s), WE WILL CONTINUE TO ADD');
       }
 
       const payload: Record<string, unknown> = {
@@ -481,16 +537,10 @@ export function PrivatePackageForm() {
     setSessionRows((rows) => rows.map((r) => (r.PrivateSessionId === sid ? { ...r, [key]: value } : r)));
   }
 
+  // (Legacy txtState_Change meant to refuse "Cancelled Prev. By Student" on a
+  // current session, but it parsed the date cell's empty text and the error
+  // was swallowed, so every status was always accepted; same here.)
   function changeState(row: SessionRow, value: string) {
-    // Legacy txtState_Change: not allowed for a session later than now-6h.
-    if (value.toLowerCase() === 'cancelled prev. by student') {
-      const when = new Date(`${row.PrivateSessionDate}T${row.PrivateSessionTime || '00:00'}:00`);
-      if (!isNaN(when.getTime()) && when.getTime() >= Date.now() - 6 * 3600 * 1000) {
-        toast.error('Date of session is same as current date, can not choose this status.');
-        setRow(row.PrivateSessionId, 'PrivateSessionState', 'Regular');
-        return;
-      }
-    }
     setRow(row.PrivateSessionId, 'PrivateSessionState', value);
   }
 
@@ -501,7 +551,7 @@ export function PrivatePackageForm() {
       if (r.PrivateSessionState === 'Regular' && (r.PrivateSessionMkupDate || r.PrivateSessionMkupTime.length > 2)) {
         toast.error(`Can not SAVE | Regular and having Make Up date (${when}).`); return;
       }
-      if (!r.PrivateSessionRemarks.trim() && (r.PrivateSessionMkupDate || r.PrivateSessionState === 'Makeup')) {
+      if (r.PrivateSessionRemarks.length === 0 && r.PrivateSessionMkupDate) {
         toast.error(`Can not SAVE | Remarks must be added when we have Make Up (${when}).`); return;
       }
     }
@@ -614,9 +664,13 @@ ${rows}
           <p className="text-sm text-amber-700">Your account has view-only access, saving is disabled.</p>
         </div>
       )}
-      {isClosed && !isSiteMaster && canSave && (
+      {isClosed && canSave && (
         <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-4">
-          <p className="text-sm text-amber-700">This package is closed; only a SiteMaster can change it or its sessions.</p>
+          <p className="text-sm text-amber-700">
+            {isSiteMaster
+              ? 'This package is closed; its sessions can not be changed (reopen it to edit them).'
+              : 'This package is closed; only a SiteMaster can change it, and its sessions can not be changed.'}
+          </p>
         </div>
       )}
 
@@ -646,25 +700,26 @@ ${rows}
                       placeholder="Search student…"
                       className={`${inputCls} pl-8`}
                     />
-                    {(searching || results.length > 0) && (
-                      <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-                        {searching && <div className="px-3 py-2 text-xs text-slate-400">Searching…</div>}
-                        {results.map((r) => (
-                          <button
-                            key={r.id}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => pickStudent(r)}
-                            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                      {studentsLoading && <div className="px-3 py-2 text-xs text-slate-400">Loading…</div>}
+                      {!studentsLoading && results.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-slate-400">No private swimmer of this location matches.</div>
+                      )}
+                      {results.map((r) => (
+                        <button
+                          key={r.id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickStudent(r)}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <button
-                    onClick={() => { setActiveSlot(slot); setQ(''); setResults([]); }}
+                    onClick={() => { setActiveSlot(slot); setQ(''); }}
                     className={`${inputCls} text-left text-slate-400 hover:border-[#1e5c97]/50`}
                   >
                     Choose student…
@@ -694,7 +749,7 @@ ${rows}
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Package type</label>
-              <select value={packageName} onChange={(e) => setPackageName(e.target.value)} className={inputCls}>
+              <select value={packageName} onChange={(e) => { setPackageName(e.target.value); applyType(e.target.value, studentIds); }} className={inputCls}>
                 <option value="">-</option>
                 {types.map((t) => <option key={t.name} value={t.name}>{t.info}</option>)}
                 {packageName && !types.some((t) => t.name === packageName) && (
@@ -726,14 +781,15 @@ ${rows}
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Status</label>
               <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls}>
-                {PACKAGE_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
-                {status && !PACKAGE_STATUSES.includes(status) && <option value={status}>{status}</option>}
+                {PACKAGE_STATUSES.map((st) => <option key={st.value} value={st.value}>{st.label}</option>)}
+                {status && !PACKAGE_STATUSES.some((st) => st.value === status) && <option value={status}>{status}</option>}
               </select>
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Follow-up</label>
               <select value={followUp} onChange={(e) => setFollowUp(e.target.value)} className={inputCls}>
-                {FOLLOW_UPS.map((f) => <option key={f} value={f}>{f || '-'}</option>)}
+                {FOLLOW_UPS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                {followUp && !FOLLOW_UPS.some((f) => f.value === followUp) && <option value={followUp}>{followUp}</option>}
               </select>
             </div>
             <div>
@@ -804,12 +860,14 @@ ${rows}
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Currency</label>
+              {/* Legacy has no currency field: the insert takes the package
+                  type's PrivatePackageCurrency and an update never changes it. */}
               <select
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
-                disabled={!isNew}
+                disabled
                 className={inputCls}
-                title={isNew ? '' : 'Currency is set when the package is created'}
+                title={isNew ? 'Taken from the package type' : 'Currency is set when the package is created'}
               >
                 <option value="USD">USD</option>
                 <option value="LBP">LBP</option>
@@ -1000,6 +1058,24 @@ ${rows}
         </div>
       )}
 
+      {/* ── Legacy student profile (GetStudentProfile, student 1) ───────────── */}
+      {!isNew && history?.student && (
+        <div className={`${cardCls} mt-6`}>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Profile</p>
+            <Link to={`/students/${history.studentId}`} className="text-xs font-semibold text-[#1e5c97] hover:underline">Edit</Link>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-1.5 text-sm text-slate-600">
+            <p>D.O.B : <b className="text-slate-800">{fmtDate(history.student.StudentDateOfBirth)}</b></p>
+            <p>Nationality : <b className="text-slate-800">{s(history.student.StudentNationality1)}</b></p>
+            <p>Studying at : <b className="text-slate-800">{s(history.student.StudentSchool)}</b></p>
+            <p>Training at : <b className="text-slate-800">{s(history.student.locationNickName)}</b></p>
+            <p>Address <b className="text-slate-800">{s(history.student.StudentAddressFullAddress)}</b></p>
+            <p>Phone : <b className="text-slate-800">{s(history.student.StudentPhoneNumber1)}</b></p>
+          </div>
+        </div>
+      )}
+
       {/* ── Payments (edit mode only) ─────────────────────────────────────── */}
       {!isNew && (
         <div className={`${cardCls} mt-6`}>
@@ -1046,6 +1122,109 @@ ${rows}
               </tfoot>
             </table>
           )}
+        </div>
+      )}
+
+      {/* ── Legacy LtrStudentProfileandHistory: student 1's group and private
+          history, then this package's feedback form ─────────────────────── */}
+      {!isNew && history && history.registrations.length > 0 && (
+        <div className={`${cardCls} mt-6`}>
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Group Registrations</p>
+          <table className="tbl w-full text-xs">
+            <thead>
+              <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-2 font-semibold">Semester</th>
+                <th className="px-2 py-2 font-semibold">Classes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.registrations.map((r) => {
+                // Legacy String.Replace (every occurrence) chain.
+                const clean = (v: unknown) => [[' -  - ', ''], ['1.', ''], ['2.', ''], ['3.', ''], ['4.', ''], [' - ', '-']]
+                  .reduce((acc, [a, b]) => acc.split(a).join(b), s(v));
+                const classes = [clean(r.ClassName1)];
+                if (s(r.ClassName2).length > 2) classes.push(clean(r.ClassName2));
+                if (s(r.ClassName3).length > 2) classes.push(clean(r.ClassName3));
+                return (
+                  <tr key={n(r.RegistrationId)} className="border-b border-slate-50 last:border-0 text-slate-600">
+                    <td className="px-2 py-1.5">
+                      <Link to={`/registrations/${n(r.RegistrationId)}`} className="font-semibold text-[#1e5c97] hover:underline">{s(r.SemesterName)}</Link>
+                    </td>
+                    <td className="px-2 py-1.5">{classes.join(' - ')}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!isNew && history && history.packages.length > 0 && (
+        <div className={`${cardCls} mt-6`}>
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Private Packages</p>
+          <table className="tbl w-full text-xs">
+            <thead>
+              <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-2 font-semibold">Loc</th>
+                <th className="px-2 py-2 font-semibold">Date</th>
+                <th className="px-2 py-2 font-semibold">Coach</th>
+                <th className="px-2 py-2 font-semibold">Package</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.packages.map((p) => (
+                <tr key={n(p.PackageId)} className={`border-b border-slate-50 last:border-0 text-slate-600 ${n(p.PackageId) === packageId ? 'bg-sky-50' : ''}`}>
+                  <td className="px-2 py-1.5">
+                    <Link to={`/privates/${n(p.PackageId)}`} className="font-semibold text-[#1e5c97] hover:underline">{s(p.LocationNickName)}</Link>
+                  </td>
+                  <td className="px-2 py-1.5">{fmtDate(p.PackageStartDate)}</td>
+                  {/* Legacy strips the coach-name ordering digits and dots. */}
+                  <td className="px-2 py-1.5">{s(p.CoachFullName).split(' -  - ').join('').replace(/[1234.]/g, '')}</td>
+                  <td className="px-2 py-1.5">{s(p.PackageNamewInfo)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!isNew && history && (
+        <div className={`${cardCls} mt-6`}>
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-3">Feedback Form</p>
+          {!history.feedback ? (
+            <p className="text-sm text-slate-400">No Feedback Requested for this Package</p>
+          ) : (() => {
+            const f = history.feedback;
+            const requested = [f.FeedbackRequestedDate1, f.FeedbackRequestedDate2, f.FeedbackRequestedDate3]
+              .map(fmtDayDate).filter(Boolean).join(' and ');
+            return (
+              <div className="text-sm text-slate-700 space-y-1">
+                <p>
+                  Feedback Requested on {requested || '-'}
+                  {s(f.FeedbackFilledDate) && <><br />Answered ON {fmtDayDate(f.FeedbackFilledDate)}</>}
+                  {s(f.FeedbackFilledIP) && <> IP Address {s(f.FeedbackFilledIP)}</>}
+                </p>
+                {s(f.FeedbackIntroduction) && <p className="pt-2 whitespace-pre-line">{s(f.FeedbackIntroduction)}</p>}
+                <div className="pt-2 space-y-0.5">
+                  {[1, 2, 3, 4, 5].map((k) => {
+                    const a = s(f[`FeedbackQuestion${k}Answer`]);
+                    return (
+                      <p key={k}>
+                        {s(f[`FeedbackQuestion${k}Text`])} :{' '}
+                        <span className="font-bold text-[15px]" style={{ color: ANSWER_COLOR[a] ?? undefined }}>{ANSWER_TEXT[a] ?? a}</span>
+                      </p>
+                    );
+                  })}
+                </div>
+                {s(f.FeedbackQuestionSuggestions) && (
+                  <p className="pt-1">
+                    Additional Suggestions:<br />
+                    <span className="font-bold text-[15px] text-blue-900">{s(f.FeedbackQuestionSuggestions)}</span>
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

@@ -6,6 +6,7 @@
 import { ModuleListPage, type ModuleConfig, type FilterOption } from '../components/ModuleListPage';
 
 const LOOKUPS = '/api/portal/modules/lookups';
+const SITEMASTER = ['sitemaster'];
 
 // Year picker: current year back to 2018 (data starts well within that range).
 const YEARS: FilterOption[] = (() => {
@@ -149,17 +150,28 @@ const paymentsByCoach: ModuleConfig = {
   endpoint: '/api/portal/modules/reports/payments-by-coach',
   lookups: LOOKUPS,
   idKey: 'CoachFullname',
+  // Legacy: the semester list follows the location and opens on its current
+  // semester (Semester_Select_Current); the semester posts back on change.
+  semesterPick: 'current',
+  // Legacy LblResultCounts "Records N  Total: LBP x" (the page was SiteMaster-only).
+  summary: {
+    roles: SITEMASTER,
+    prefix: '',
+    text: (rows) => `Total: LBP ${rows.reduce((s, r) => s + (Number(r.Total) || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+  },
   filters: [
     { param: 'searchFor', label: 'Search…', type: 'text' },
     // Location drives the semester list but the report only takes a semester.
-    { param: 'locationId', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-40', submit: false },
-    { param: 'semesterId', label: 'Semester', type: 'select', optionsKey: 'semesters', width: 'max-w-44' },
+    // Legacy ddlLocations was disabled below SiteMaster.
+    { param: 'locationId', label: 'Location', type: 'select', optionsKey: 'locations', width: 'max-w-40', submit: false, lockedFor: ['superuser', 'user', 'payment/audit', 'guest'] },
+    { param: 'semesterId', label: 'Semester', type: 'select', optionsKey: 'semesters', width: 'max-w-44', autoSubmit: true },
   ],
+  // P_Payment_Rpt_Coaches returns CoachFullname / Total / CountOFStds / semestername.
   columns: [
     { key: 'CoachFullname', label: 'Coach' },
     { key: 'semestername', label: 'Semester' },
-    { key: 'CountOFStds', label: 'Students', total: true },
-    { key: 'Total', label: 'Total', format: 'money', total: true },
+    { key: 'CountOFStds', label: 'Students', total: true, totalRoles: SITEMASTER },
+    { key: 'Total', label: 'TotalAmount', format: 'money', total: true, totalRoles: SITEMASTER },
   ],
 };
 
