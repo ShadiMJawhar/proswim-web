@@ -537,10 +537,18 @@ export function PrivatePackageForm() {
     setSessionRows((rows) => rows.map((r) => (r.PrivateSessionId === sid ? { ...r, [key]: value } : r)));
   }
 
-  // (Legacy txtState_Change meant to refuse "Cancelled Prev. By Student" on a
-  // current session, but it parsed the date cell's empty text and the error
-  // was swallowed, so every status was always accepted; same here.)
+  // Same rule as the daily-attendance page (user decision 2026-10-22):
+  // "Cancelled Prev. By Student" can't be chosen for a session dated within
+  // the last 6 hours or later → alert + Regular. The API enforces it too.
   function changeState(row: SessionRow, value: string) {
+    if (value === 'Cancelled Prev. By Student') {
+      const d = row.PrivateSessionDate ? new Date(String(row.PrivateSessionDate).slice(0, 10) + 'T00:00:00') : null;
+      if (d && !isNaN(d.getTime()) && d.getTime() >= Date.now() - 6 * 3600 * 1000) {
+        window.alert('Date of Session is same as Current Date, Can not choose this Status, Please Correct');
+        setRow(row.PrivateSessionId, 'PrivateSessionState', 'Regular');
+        return;
+      }
+    }
     setRow(row.PrivateSessionId, 'PrivateSessionState', value);
   }
 

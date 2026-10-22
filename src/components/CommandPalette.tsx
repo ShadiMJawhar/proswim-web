@@ -9,6 +9,7 @@ import {
   Globe, Megaphone, Truck, Layers, Receipt, ClipboardCheck, Plus,
 } from 'lucide-react';
 import { apiRequest, getStoredUser, isSuperUser } from '../api/portalApi';
+import { useAccess } from './AccessProvider';
 
 type Icon = typeof Search;
 interface Page { label: string; to: string; icon: Icon; keywords?: string; superOnly?: boolean }
@@ -85,6 +86,8 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const user = getStoredUser();
   const superUser = isSuperUser(user);
+  // Same gate as the sidebar: role access (tbl_Portal_RoleAccess) + superOnly.
+  const { canView } = useAccess();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [students, setStudents] = useState<Picker[]>([]);
@@ -121,10 +124,10 @@ export function CommandPalette() {
 
   const pageMatches = useMemo(() => {
     const s = q.trim().toLowerCase();
-    const visible = PAGES.filter((p) => !p.superOnly || superUser);
+    const visible = PAGES.filter((p) => canView(p.to) && (!p.superOnly || superUser));
     if (!s) return visible.slice(0, 7);
     return visible.filter((p) => fuzzy(`${p.label} ${p.keywords ?? ''}`, s)).slice(0, 8);
-  }, [q, superUser]);
+  }, [q, superUser, canView]);
 
   type Item = { key: string; label: string; icon: Icon; to: string; group: string };
   const items: Item[] = useMemo(() => [
