@@ -567,6 +567,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
             <thead>
               <tr>
                 <th className="!px-2" />
+                {showActions && <th />}
                 <SortHeader label="Location" k="LocationNickName" grid={grid} />
                 {variant.hasSemester && <SortHeader label="Semester" k="SemesterName" grid={grid} />}
                 <SortHeader label="S/N" k={variant.serialKey} grid={grid} />
@@ -575,7 +576,6 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                 <SortHeader label={variant.hasSemester ? 'Net' : 'Amount'} k={variant.amountKey} grid={grid} align="right" />
                 <SortHeader label="Received" k={variant.recDateKey} grid={grid} />
                 <SortHeader label="Closed" k={variant.closedKey} grid={grid} align="center" />
-                {showActions && <th />}
               </tr>
             </thead>
             <tbody>
@@ -589,14 +589,7 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                   <Fragment key={id}>
                     <tr onClick={() => toggleDetail(id)} className="cursor-pointer hover:bg-slate-50">
                       <td className="w-6 !px-2">{openId === id ? <ChevronDown className="size-4 text-slate-400" /> : <ChevronRight className="size-4 text-slate-400" />}</td>
-                      <td>{str(r, 'LocationNickName') || '-'}</td>
-                      {variant.hasSemester && <td>{str(r, 'SemesterName') || '-'}</td>}
-                      <td className="font-semibold">{str(r, variant.serialKey)}</td>
-                      {variant.hasSemester && <td className="text-right text-emerald-700 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalPayments'))}</td>}
-                      {variant.hasSemester && <td className="text-right text-red-600 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalExpenses'))}</td>}
-                      <td className="text-right font-bold tabular-nums">{money(pick(r, variant.amountKey))}</td>
-                      <td>{dmy(pick(r, variant.recDateKey))}</td>
-                      <td className="text-center">{closed ? <span className="text-emerald-700 font-bold">Yes</span> : ''}</td>
+                      {/* Actions first (user, 2026-10-24). */}
                       {showActions && (
                         <td onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-3">
@@ -630,6 +623,14 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
                           </div>
                         </td>
                       )}
+                      <td>{str(r, 'LocationNickName') || '-'}</td>
+                      {variant.hasSemester && <td>{str(r, 'SemesterName') || '-'}</td>}
+                      <td className="font-semibold">{str(r, variant.serialKey)}</td>
+                      {variant.hasSemester && <td className="text-right text-emerald-700 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalPayments'))}</td>}
+                      {variant.hasSemester && <td className="text-right text-red-600 tabular-nums">{money(pick(r, 'PaymentDeliveryTotalExpenses'))}</td>}
+                      <td className="text-right font-bold tabular-nums">{money(pick(r, variant.amountKey))}</td>
+                      <td>{dmy(pick(r, variant.recDateKey))}</td>
+                      <td className="text-center">{closed ? <span className="text-emerald-700 font-bold">Yes</span> : ''}</td>
                     </tr>
                     {openId === id && (
                       <tr>
@@ -653,9 +654,10 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
               <tfoot>
                 <tr className="bg-slate-50 font-bold">
                   <td />
+                  {showActions && <td />}
                   <td colSpan={2} className="text-slate-500 text-sm">Total</td>
                   <td className="text-center tabular-nums">{money0(amountTotal)}</td>
-                  <td colSpan={3} />
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             )}
@@ -664,11 +666,12 @@ function DeliveriesPage({ variant }: { variant: Variant }) {
               <tfoot>
                 <tr className="bg-slate-50 font-bold">
                   <td />
+                  {showActions && <td />}
                   <td colSpan={3} className="text-slate-500 text-sm">Total</td>
                   <td className="text-right tabular-nums">{money0(groupFooter.payments)}</td>
                   <td className="text-right tabular-nums">{money0(groupFooter.expenses)}</td>
                   <td className="text-right tabular-nums">{money0(groupFooter.net)}</td>
-                  <td colSpan={3} />
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             )}

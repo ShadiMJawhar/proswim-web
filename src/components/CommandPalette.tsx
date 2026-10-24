@@ -43,6 +43,7 @@ const PAGES: Page[] = [
   { label: 'Memberships', to: '/members', icon: UserRound },
   { label: 'Membership Attendance', to: '/m-attendance', icon: ClipboardCheck },
   { label: 'Coaches', to: '/coaches', icon: UserRound, keywords: 'staff instructors' },
+  { label: 'Schools', to: '/schools', icon: GraduationCap, keywords: 'school list setup' },
   { label: 'Classes', to: '/classes', icon: CalendarDays },
   { label: 'Semesters', to: '/semesters', icon: ClipboardCheck },
   { label: 'Locations', to: '/locations', icon: MapPin, keywords: 'branch pool' },

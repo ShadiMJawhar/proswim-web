@@ -40,7 +40,7 @@ const ICONS: Record<string, Icon> = {
   '/feedback': MessageSquare, '/notifications-list': Bell,
   '/web/classes': Globe, '/web/levels': Globe, '/web/faqs': Globe, '/web/presses': Globe,
   '/web/videos': Globe, '/web/feedback': Globe,
-  '/locations': MapPin, '/location-photos': MapPin, '/coaches': UserRound, '/users': Shield,
+  '/locations': MapPin, '/location-photos': MapPin, '/coaches': UserRound, '/schools': GraduationCap, '/users': Shield,
   '/settings': Settings, '/text-settings': MessageSquare, '/access-control': ShieldCheck,
   '/old-system': PowerOff,
 };

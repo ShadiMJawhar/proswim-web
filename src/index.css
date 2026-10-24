@@ -97,3 +97,25 @@ h1, h2, h3 {
   .page-in, .hero-in, .rise-in { animation: none; }
   .card-lift, .card-lift:hover { transition: none; transform: none; }
 }
+
+/* Clickable things show the hand (Tailwind 4 resets buttons to the arrow
+   cursor); disabled ones show "not allowed". User request 2026-10-24. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  label:has(> input[type="checkbox"]:not(:disabled)),
+  label:has(> input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  input:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
+  }
+}

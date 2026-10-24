@@ -176,6 +176,7 @@ const FULL_NAV: NavEntry[] = [
       { to: '/locations', label: 'Locations', icon: MapPin },
       { to: '/location-photos', label: 'Location Photos', icon: MapPin },
       { to: '/coaches', label: 'Coaches', icon: UserRound },
+      { to: '/schools', label: 'Schools', icon: GraduationCap },
       { to: '/users', label: 'Users', icon: Shield },
       { to: '/settings', label: 'System Settings', icon: Settings },
       { to: '/text-settings', label: 'Text Settings', icon: MessageSquare },

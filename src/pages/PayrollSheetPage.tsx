@@ -23,6 +23,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Loader2, AlertCircle, RefreshCw, Save, Download, X, Check, History, UserCog, ChevronRight, SquarePen, Columns3, RotateCcw } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { PageHero } from '../components/PageHero';
+import { PickerPanel } from '../components/PickerPanel';
 import { SmartBack } from '../components/SmartBack';
 import { toast } from '../components/Toast';
 
@@ -154,6 +155,7 @@ export function PayrollSheetPage() {
   const [showNoWork, setShowNoWork] = useState(false);
   const [cols, setCols] = useState<Cols>(DEFAULT_COLS);
   const [colsOpen, setColsOpen] = useState(false);
+  const colsBtn = useRef<HTMLButtonElement>(null);
   // Click a header to sort: first click ascending, second descending, third back to the proc order.
   const [sort, setSort] = useState<{ k: string; d: 1 | -1 } | null>(null);
   const toggleSort = (k: string) => setSort((cur) => (cur?.k === k ? (cur.d > 0 ? { k, d: -1 } : null) : { k, d: 1 }));
@@ -416,14 +418,24 @@ export function PayrollSheetPage() {
 
         {/* Column picker */}
         <div className="relative">
-          <button onClick={() => setColsOpen((o) => !o)}
+          <button ref={colsBtn} onClick={() => setColsOpen((o) => !o)}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold ${colsOpen ? 'border-[#1e5c97] bg-[#e8f0f8] text-[#1e5c97]' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
             <Columns3 className="size-4" /> Columns
           </button>
           {colsOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setColsOpen(false)} />
-              <div className="absolute left-0 z-40 mt-1 w-[520px] max-w-[92vw] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+            <PickerPanel anchor={colsBtn} align="left" width={520} title="Columns to show" onClose={() => setColsOpen(false)}
+              footer={<>
+                <button onClick={() => updateCols({ ...ALL_COLS, hideZero: cols.hideZero })}
+                  className="text-[11px] font-semibold text-[#1e5c97] hover:underline">Show all columns</button>
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 select-none cursor-pointer">
+                  <input type="checkbox" checked={!!cols.hideZero} onChange={() => toggleCol('hideZero')} className="accent-[#1e5c97]" />
+                  Hide sections with no hours
+                </label>
+                <button onClick={() => updateCols({ ...DEFAULT_COLS })}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-[#1e5c97]">
+                  <RotateCcw className="size-3" /> Reset to default
+                </button>
+              </>}>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <div className="mb-1 flex items-center justify-between">
@@ -449,21 +461,7 @@ export function PayrollSheetPage() {
                     {OTHER_COLS.map(([k, l]) => <CheckRow key={k} k={k} label={l} />)}
                   </div>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-2">
-                  <button onClick={() => updateCols({ ...ALL_COLS, hideZero: cols.hideZero })}
-                    className="text-[11px] font-semibold text-[#1e5c97] hover:underline">Show all columns</button>
-                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 select-none cursor-pointer">
-                    <input type="checkbox" checked={!!cols.hideZero} onChange={() => toggleCol('hideZero')} className="accent-[#1e5c97]" />
-                    Hide sections with no hours
-                  </label>
-                  <p className="ml-auto text-[11px] text-slate-400">Saved automatically.</p>
-                  <button onClick={() => updateCols({ ...DEFAULT_COLS })}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-[#1e5c97]">
-                    <RotateCcw className="size-3" /> Reset to default
-                  </button>
-                </div>
-              </div>
-            </>
+            </PickerPanel>
           )}
         </div>
 

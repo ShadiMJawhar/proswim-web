@@ -32,6 +32,7 @@ import { CompPortfolioPage } from './pages/CompPortfolioPage';
 import { CompetitionsPage } from './pages/CompetitionsPage';
 import { CompSwimmersPage } from './pages/CompSwimmersPage';
 import { LocationsAdminPage } from './pages/LocationsAdminPage';
+import { SchoolsPage } from './pages/SchoolsPage';
 import { SessionChangesManualPage } from './pages/SessionChangesManualPage';
 import { SessionChangesApprovePage } from './pages/SessionChangesApprovePage';
 import { AnnouncementsPage } from './pages/AnnouncementsPage';
@@ -196,6 +197,7 @@ export default function App() {
           <Route path="/coaches" element={<CoachesPage />} />
           <Route path="/coaches/:id" element={<CoachForm />} />
           <Route path="/coaches/:id/schedule" element={<CoachSchedulePage />} />
+          <Route path="/schools" element={<SchoolsPage />} />
           <Route path="/classes" element={<ClassesPage />} />
           <Route path="/classes/generate" element={<GenerateClassesPage />} />
           <Route path="/classes/:classId/attendance" element={<ClassLatestAttendanceRedirect />} />

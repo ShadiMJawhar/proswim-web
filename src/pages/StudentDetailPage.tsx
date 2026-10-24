@@ -10,6 +10,7 @@ import { apiRequest, apiUpload, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { AiStudentOverview } from '../components/AiStudentOverview';
+import { SchoolPicker } from '../components/SchoolPicker';
 import { SmartBack } from '../components/SmartBack';
 
 // Full proc row, keyed by original column names (PascalCase from SQL).
@@ -40,7 +41,7 @@ const DATALIST_FOR: Record<string, string> = {
   StudentStartingLocation: 'startingLocations',
 };
 
-type FieldType = 'text' | 'date' | 'checkbox' | 'textarea' | 'gender' | 'bloodType' | 'location' | 'coach';
+type FieldType = 'text' | 'date' | 'checkbox' | 'textarea' | 'gender' | 'bloodType' | 'location' | 'coach' | 'school';
 
 interface FieldDef {
   key: string;      // original column / proc param name
@@ -60,7 +61,7 @@ const SECTIONS: Array<{ title: string; fields: FieldDef[] }> = [
       { key: 'StudentGender', label: 'Gender', type: 'gender' },
       { key: 'StudentDateOfBirth', label: 'Date of birth', type: 'date' },
       { key: 'StudentBloodTypeId', label: 'Blood type', type: 'bloodType' },
-      { key: 'StudentSchool', label: 'School', type: 'text' },
+      { key: 'StudentSchool', label: 'School', type: 'school' },
       { key: 'StudentNationality1', label: 'Nationality 1', type: 'text' },
       { key: 'StudentNationality2', label: 'Nationality 2', type: 'text' },
       { key: 'StudentMomOccupation', label: 'Mom occupation', type: 'text' },
@@ -355,6 +356,19 @@ export function StudentDetailPage() {
                 </option>
               ))}
             </select>
+          </div>
+        );
+      case 'school':
+        // School master list picker (free text + the old suggestions until the list exists).
+        return (
+          <div key={fd.key}>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">{fd.label}</label>
+            <SchoolPicker
+              value={String(v ?? '')}
+              onChange={(name) => set(fd.key, name)}
+              className={inputCls}
+              suggestions={datalists[DATALIST_FOR[fd.key] ?? '']}
+            />
           </div>
         );
       default: {

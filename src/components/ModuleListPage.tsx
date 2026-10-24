@@ -119,7 +119,7 @@ export interface ModuleConfig {
   columnGroups?: { key: string; label: string; roles?: string[] }[];
   /** Extra header buttons built from the loaded rows (proc order) and the
    *  current filter values, e.g. the private list's feedback stats prints. */
-  actions?: (rows: Row[], values: Record<string, string | number | boolean>) => React.ReactNode;
+  actions?: (rows: Row[], values: Record<string, string | number | boolean>, reload: () => void) => React.ReactNode;
 }
 
 const PAGE_SIZE = 50;
@@ -442,8 +442,15 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const groupAllowed = (c: ColumnDef) => !c.group || groups.some((g) => g.key === c.group);
   const pickable = (c: ColumnDef) => !!c.label && !c.key.startsWith('_');
   const defaultShown = (c: ColumnDef) => !c.extra && !c.group;
-  const cols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c)))
+  const visibleCols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c)))
     && !c.hiddenWhen?.(values, userRole));
+  // Action buttons first (user, 2026-10-24): the Edit pencil and the action
+  // columns ("_" keys: Pay, Sessions, Take, Schedule…) lead every row. Payroll
+  // lists keep their old layout (payroll stays untouched unless asked).
+  const actionsFirst = config.editFirst ?? !config.endpoint.includes('/portal/payroll/');
+  const cols = actionsFirst
+    ? [...visibleCols.filter((c) => c.key.startsWith('_')), ...visibleCols.filter((c) => !c.key.startsWith('_'))]
+    : visibleCols;
   const pickerSections: PickerSection[] = [
     { title: 'Columns', columns: config.columns.filter((c) => pickable(c) && !c.extra && !c.group) },
     { title: 'More columns', columns: config.columns.filter((c) => pickable(c) && c.extra && !c.group) },
@@ -475,7 +482,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const selectCls =
     'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
 
-  // Row Edit pencil (last column, or first with config.editFirst).
+  // Row Edit pencil (first column; last on payroll lists or with editFirst: false).
   const editCell = (r: Row) => (
                       <td className="px-3 py-2.5 text-right">
                         <button
@@ -509,7 +516,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
         slide={config.title.length % 4}
         right={
           <div className="flex items-center gap-2">
-            {!loading && config.actions?.(rows, values)}
+            {!loading && config.actions?.(rows, values, () => load())}
             {canEdit && (
               <button
                 onClick={() => {
@@ -648,7 +655,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             <table className="tbl w-full text-sm whitespace-nowrap">
               <thead>
                 <tr className="text-left text-xs text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                  {canEdit && config.editFirst && <th className="px-3 py-3 font-semibold">Edit</th>}
+                  {canEdit && actionsFirst && <th className="px-3 py-3 font-semibold">Edit</th>}
                   {cols.map((c) => (
                     <th key={c.key + c.label} className="px-3 py-3 font-semibold">
                       {/* Action columns (no title, e.g. Pay) aren't sortable. */}
@@ -662,7 +669,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                       ) : null}
                     </th>
                   ))}
-                  {canEdit && !config.editFirst && <th className="px-3 py-3 font-semibold text-right">Edit</th>}
+                  {canEdit && !actionsFirst && <th className="px-3 py-3 font-semibold text-right">Edit</th>}
                 </tr>
               </thead>
               <tbody>
@@ -671,7 +678,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                     key={String(rowId(r, config.idKey) ?? i)}
                     className={`border-b border-slate-50 last:border-0 ${config.rowClass?.(r) ?? ''}`}
                   >
-                    {canEdit && config.editFirst && editCell(r)}
+                    {canEdit && actionsFirst && editCell(r)}
                     {cols.map((c) => {
                       const custom = config.renderCell?.(r, c, load);
                       return (
@@ -680,7 +687,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                         </td>
                       );
                     })}
-                    {canEdit && !config.editFirst && editCell(r)}
+                    {canEdit && !actionsFirst && editCell(r)}
                   </tr>
                 ))}
                 {pageRows.length === 0 && (
@@ -694,20 +701,20 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
               {hasTotals && sorted.length > 0 && (
                 <tfoot>
                   <tr className="border-t-2 border-slate-200 font-bold text-slate-700 bg-slate-50/60">
-                    {canEdit && config.editFirst && <td className="px-3 py-2.5">Total</td>}
+                    {canEdit && actionsFirst && <td className="px-3 py-2.5">Total</td>}
                     {cols.map((c, idx) => (
                       <td key={c.key + c.label} className="px-3 py-2.5">
                         {/* w-0 + min-w-full: a long total never widens its column. */}
                         <div className="w-0 min-w-full whitespace-nowrap">
                           {!showTotal(c)
-                            ? (idx === 0 && !(canEdit && config.editFirst) ? 'Total' : '')
+                            ? (idx === 0 && !(canEdit && actionsFirst) ? 'Total' : '')
                             : c.totalBy
                               ? totalsBy(sorted, c)
                               : Number(sorted.reduce((s, r) => s + (Number(r[c.key]) || 0), 0)).toLocaleString()}
                         </div>
                       </td>
                     ))}
-                    {canEdit && !config.editFirst && <td />}
+                    {canEdit && !actionsFirst && <td />}
                   </tr>
                 </tfoot>
               )}

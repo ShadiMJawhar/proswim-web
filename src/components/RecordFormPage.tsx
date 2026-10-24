@@ -5,6 +5,7 @@ import { apiRequest, getStoredUser } from '../api/portalApi';
 import { canGoBack } from '../lib/history';
 import { DateInput } from './DateInput';
 import { PageHero } from './PageHero';
+import { SchoolPicker } from './SchoolPicker';
 import { SmartBack } from './SmartBack';
 import { toast } from './Toast';
 
@@ -12,7 +13,9 @@ type Row = Record<string, unknown>;
 type Option = { value: string | number; label: string };
 type Picker = { id: number; label: string };
 
-export type FieldType = 'text' | 'number' | 'date' | 'checkbox' | 'textarea' | 'select' | 'student';
+// 'school' = SchoolPicker over the school master list (its `datalist` feeds the
+// free-text fallback used while that list is empty).
+export type FieldType = 'text' | 'number' | 'date' | 'checkbox' | 'textarea' | 'select' | 'student' | 'school';
 
 export interface FormField {
   key: string;                 // proc parameter / column name
@@ -361,6 +364,19 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
             initialLabel={record ? String(record[fd.labelKey || ''] ?? '') : ''}
             onPick={(sid) => set(fd.key, sid)}
           />
+        );
+      case 'school':
+        return (
+          <div key={fd.key} className={fd.colSpan2 ? 'md:col-span-2' : ''}>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">{fd.label}{fd.hint && <span className="ml-1 font-normal text-slate-400">{fd.hint}</span>}</label>
+            <SchoolPicker
+              value={String(v ?? '')}
+              onChange={(name) => set(fd.key, name)}
+              disabled={locked}
+              className={inputCls}
+              suggestions={fd.datalist ? datalists[fd.datalist] : undefined}
+            />
+          </div>
         );
       case 'number':
         return (

@@ -516,6 +516,7 @@ export function PrivateAttendancePage() {
           <table className="w-full text-xs whitespace-nowrap">
             <thead>
               <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-3 font-semibold" />
                 {COLS.map((c) => (
                   <th key={c.key} className={`px-2 py-3 font-semibold ${c.center ? 'text-center' : ''}`}>
                     <button
@@ -530,7 +531,6 @@ export function PrivateAttendancePage() {
                     </button>
                   </th>
                 ))}
-                <th className="px-2 py-3 font-semibold" />
               </tr>
             </thead>
             <tbody>
@@ -538,6 +538,11 @@ export function PrivateAttendancePage() {
                 const states = STATES.includes(r.PrivateSessionState) ? STATES : [...STATES, r.PrivateSessionState];
                 return (
                   <tr key={r.PrivateSessionId} className="border-b border-slate-50 last:border-0" style={rowStyle(r)}>
+                    {/* Action first (user, 2026-10-24). */}
+                    <td className="px-2 py-1.5">
+                      {/* Legacy opened the package in a popup, keeping unsaved attendance edits. */}
+                      <Link to={`/privates/${r.PackageId}`} target="_blank" rel="noopener" className="font-bold text-[#1e5c97] hover:underline">Pck</Link>
+                    </td>
                     <td className="px-2 py-1.5 text-center text-slate-600">{r.LocationIcon}</td>
                     <td className="px-2 py-1.5 text-slate-600">{r.CoachFullName}</td>
                     <td className="px-2 py-1.5 font-semibold text-slate-700">{r.StudentFullName}</td>
@@ -608,10 +613,6 @@ export function PrivateAttendancePage() {
                     </td>
                     <td className="px-2 py-1.5 text-slate-500">{r.PackageNamewInfo}</td>
                     <td className="px-2 py-1.5 text-slate-500">{r.PackageStatus}</td>
-                    <td className="px-2 py-1.5">
-                      {/* Legacy opened the package in a popup, keeping unsaved attendance edits. */}
-                      <Link to={`/privates/${r.PackageId}`} target="_blank" rel="noopener" className="font-bold text-[#1e5c97] hover:underline">Pck</Link>
-                    </td>
                   </tr>
                 );
               })}

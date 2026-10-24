@@ -379,6 +379,7 @@ export function StudentsPage() {
             <table className="tbl w-full text-sm whitespace-nowrap">
               <thead>
                 <tr className="text-left text-xs text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                  <th className="px-3 py-3 font-semibold">Actions</th>
                   {cols.map((c) => (
                     <th key={c.key} className="px-3 py-3 font-semibold">
                       <button onClick={() => toggleSort(c.key)} className="flex items-center gap-1 hover:text-slate-600">
@@ -391,7 +392,6 @@ export function StudentsPage() {
                   ))}
                   <th className="px-3 py-3 font-semibold">Type</th>
                   <th className="px-3 py-3 font-semibold">Status</th>
-                  <th className="px-3 py-3 font-semibold sticky right-0 bg-white">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -404,33 +404,8 @@ export function StudentsPage() {
                       s.studentDeleted ? 'bg-[#e6c8c8]/60 line-through' : !s.studentActive ? 'bg-[#e6c8c8]/60' : ''
                     }`}
                   >
-                    {cols.map((c, i) => (
-                      <td key={c.key} className="px-3 py-2.5 text-slate-500 max-w-56 overflow-hidden text-ellipsis">
-                        {i === 0 ? (
-                          isGuest ? (
-                            <span className="font-medium text-slate-700">{s.studentFullName || `#${s.studentId}`}</span>
-                          ) : (
-                            <Link to={`/students/${s.studentId}`} className="font-medium text-[#1e5c97] hover:underline">
-                              {s.studentFullName || `#${s.studentId}`}
-                            </Link>
-                          )
-                        ) : (
-                          fmtCell(c.key, s[c.key])
-                        )}
-                      </td>
-                    ))}
+                    {/* Actions first (user, 2026-10-24). */}
                     <td className="px-3 py-2.5">
-                      <div className="flex gap-1">
-                        {s.studentGroupSwimmer && <Badge color="blue">Grp</Badge>}
-                        {s.studentPrivateSwimmer && <Badge color="violet">Prv</Badge>}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {s.studentDeleted ? <Badge color="red">Deleted</Badge>
-                        : s.studentActive ? <Badge color="green">Active</Badge>
-                        : <Badge color="gray">Inactive</Badge>}
-                    </td>
-                    <td className="px-3 py-2.5 sticky right-0 bg-white group-hover:bg-slate-50/60">
                       <div className="flex items-center gap-2">
                         {!isGuest && user?.canSave !== false && (
                           <Link
@@ -471,6 +446,32 @@ export function StudentsPage() {
                           </a>
                         )}
                       </div>
+                    </td>
+                    {cols.map((c, i) => (
+                      <td key={c.key} className="px-3 py-2.5 text-slate-500 max-w-56 overflow-hidden text-ellipsis">
+                        {i === 0 ? (
+                          isGuest ? (
+                            <span className="font-medium text-slate-700">{s.studentFullName || `#${s.studentId}`}</span>
+                          ) : (
+                            <Link to={`/students/${s.studentId}`} className="font-medium text-[#1e5c97] hover:underline">
+                              {s.studentFullName || `#${s.studentId}`}
+                            </Link>
+                          )
+                        ) : (
+                          fmtCell(c.key, s[c.key])
+                        )}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2.5">
+                      <div className="flex gap-1">
+                        {s.studentGroupSwimmer && <Badge color="blue">Grp</Badge>}
+                        {s.studentPrivateSwimmer && <Badge color="violet">Prv</Badge>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {s.studentDeleted ? <Badge color="red">Deleted</Badge>
+                        : s.studentActive ? <Badge color="green">Active</Badge>
+                        : <Badge color="gray">Inactive</Badge>}
                     </td>
                   </tr>
                 ))}

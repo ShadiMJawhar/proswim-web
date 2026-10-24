@@ -296,7 +296,7 @@ const student: RecordFormConfig = {
         { key: 'StudentGender', label: 'Gender', type: 'select', options: [{ value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }] },
         { key: 'StudentDateOfBirth', label: 'Date of birth *', type: 'date' },
         { key: 'StudentBloodTypeId', label: 'Blood type', type: 'select', optionsKey: 'bloodTypes' },
-        { key: 'StudentSchool', label: 'School', type: 'text', datalist: 'schools' },
+        { key: 'StudentSchool', label: 'School', type: 'school', datalist: 'schools' },
         { key: 'StudentNationality1', label: 'Nationality 1', type: 'text', datalist: 'nationalities' },
         { key: 'StudentNationality2', label: 'Nationality 2', type: 'text', datalist: 'nationalities' },
         { key: 'StudentMomOccupation', label: 'Mom occupation', type: 'text', datalist: 'occupations' },

@@ -322,6 +322,8 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
           <table className="w-full text-xs whitespace-nowrap">
             <thead>
               <tr className="text-left text-[11px] text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                <th className="px-2 py-3" />
+                <th className="px-2 py-3" />
                 {COLS.map((c) => (
                   <th key={c.key} className={`px-2 py-3 font-semibold ${c.center ? 'text-center' : ''}`}>
                     <button type="button" onClick={() => toggleSort(c.key)} className="inline-flex items-center gap-1 hover:text-slate-600">
@@ -332,8 +334,6 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
                     </button>
                   </th>
                 ))}
-                <th className="px-2 py-3" />
-                <th className="px-2 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -344,6 +344,19 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
                   // Legacy RowDataBound: attended rows green.
                   style={{ backgroundColor: r.ExtraClassSessionAttended ? 'rgb(0,204,102)' : undefined }}
                 >
+                  {/* Actions first (user, 2026-10-24). */}
+                  <td className="px-2 py-1.5">
+                    {canOpen && (
+                      <Link to={`/extra-classes/${r.ExtraClassId}`} className="font-bold text-[#1e5c97] hover:underline">Edit</Link>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    {canSave && (
+                      <Link to={`/pr-payments/new?packageId=${r.ExtraClassId}`} className="font-bold text-emerald-800 hover:underline">
+                        Add Payment
+                      </Link>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5 text-center text-slate-600">{r.LocationIcon}</td>
                   <td className="px-2 py-1.5 text-slate-600">{r.ExtraClassType}</td>
                   <td className="px-2 py-1.5 font-semibold text-slate-700">{r.StudentFullName}</td>
@@ -375,18 +388,6 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
                   <td className="px-2 py-1.5 text-slate-600">{money(r.ExtraClassCost)}</td>
                   <td className="px-2 py-1.5 text-slate-600">{money(r.DuePayment)}</td>
                   <td className="px-2 py-1.5 text-slate-600">{r.Phone}</td>
-                  <td className="px-2 py-1.5">
-                    {canOpen && (
-                      <Link to={`/extra-classes/${r.ExtraClassId}`} className="font-bold text-[#1e5c97] hover:underline">Edit</Link>
-                    )}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    {canSave && (
-                      <Link to={`/pr-payments/new?packageId=${r.ExtraClassId}`} className="font-bold text-emerald-800 hover:underline">
-                        Add Payment
-                      </Link>
-                    )}
-                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (

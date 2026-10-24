@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ModuleListPage, type ModuleConfig, type Row, type ColumnDef, type FilterOption } from '../components/ModuleListPage';
-import { getStoredUser } from '../api/portalApi';
+import { apiRequest, getStoredUser } from '../api/portalApi';
 import { legacyCurrencyTotal } from '../lib/totals';
-import { Printer } from 'lucide-react';
+import { Printer, Loader2, Lock } from 'lucide-react';
 import { toast } from '../components/Toast';
 import { printFeedbackStats } from './privateFeedbackStats';
 import { groupPaymentsConfig, groupPaymentsDueConfig } from './GroupPaymentLists';
@@ -246,6 +247,35 @@ const notRenewed: ModuleConfig = {
 
 // ── Private packages ─────────────────────────────────────────────────────────
 
+/** "Close all (N)" for the packages list's Need-to-Be-Closed view. */
+function CloseAllButton({ ids, onDone }: { ids: number[]; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    const n = ids.length;
+    if (!window.confirm(`Close ${n.toLocaleString()} package${n === 1 ? '' : 's'}?
+
+Every listed Active package that has all its sessions attended and is fully paid will get the status "Closed". Packages that no longer qualify are skipped.`)) return;
+    setBusy(true);
+    try {
+      const r = await apiRequest<{ closed: number; skippedCount: number }>('/api/portal/edit/private-packages/close-batch', {
+        method: 'POST', body: JSON.stringify({ packageIds: ids }),
+      });
+      toast.success(`${r.closed.toLocaleString()} package${r.closed === 1 ? '' : 's'} closed.${r.skippedCount ? ` ${r.skippedCount} skipped (no longer need closing).` : ''}`);
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not close the packages.');
+    } finally { setBusy(false); }
+  }
+  return (
+    <button type="button" onClick={run} disabled={busy}
+      title="Close every listed package that is fully attended and fully paid"
+      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60 transition-colors">
+      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Lock className="size-3.5" />}
+      Close all ({ids.length.toLocaleString()})
+    </button>
+  );
+}
+
 function privatePackagesConfig(): ModuleConfig {
   // Built per render: the feedback block depends on the signed-in user, and
   // the date window on today. From (user rule 2026-10-24): July onwards → 1 Jan
@@ -290,18 +320,30 @@ function privatePackagesConfig(): ModuleConfig {
     columnGroups: [{ key: 'feedback', label: 'Feedback columns', roles: fbRoles }],
     // Legacy BtnPrintFeedbackCoaches / BtnPrintFeedbackLocations: shown once the
     // "Only if feedback Requested" filter is on and the search returned rows.
-    actions: (rows, values) => {
-      if (fbRoles || values.onlyWithFeedback !== true || rows.length === 0) return null;
-      const btn = (by: 'coach' | 'location', label: string) => (
-        <button
-          type="button"
-          onClick={() => { if (!printFeedbackStats(rows, by)) toast.error('Pop-up blocked; allow pop-ups to print.'); }}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#1e5c97] hover:bg-slate-50 transition-colors"
-        >
-          <Printer className="size-3.5" /> {label}
-        </button>
-      );
-      return <>{btn('coach', 'Coaches Stats')}{btn('location', 'Location Stats')}</>;
+    actions: (rows, values, reload) => {
+      // "Close all" (user, 2026-10-24): on the Need-to-Be-Closed view, the
+      // SiteMaster or a super user can close every listed Active package in
+      // one step. The API re-checks each one (all attended + fully paid).
+      const u = getStoredUser();
+      const ut = (u?.userType || '').toLowerCase();
+      const canBulkClose = (ut === 'sitemaster' || ut === 'superuser') && u?.canSave !== false;
+      const toClose = rows.filter((r) => String(r.PackageStatus ?? '') === 'Active').map((r) => Number(r.PackageId)).filter((n) => n > 0);
+      const closeAll = canBulkClose && values.needAttention === 'NeedtoBeClosed' && toClose.length > 0 ? (
+        <CloseAllButton ids={toClose} onDone={reload} />
+      ) : null;
+      const stats = fbRoles || values.onlyWithFeedback !== true || rows.length === 0 ? null : (() => {
+        const btn = (by: 'coach' | 'location', label: string) => (
+          <button
+            type="button"
+            onClick={() => { if (!printFeedbackStats(rows, by)) toast.error('Pop-up blocked; allow pop-ups to print.'); }}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#1e5c97] hover:bg-slate-50 transition-colors"
+          >
+            <Printer className="size-3.5" /> {label}
+          </button>
+        );
+        return <>{btn('coach', 'Coaches Stats')}{btn('location', 'Location Stats')}</>;
+      })();
+      return closeAll || stats ? <>{closeAll}{stats}</> : null;
     },
     columns: [
       { key: '_pay', label: '' },
