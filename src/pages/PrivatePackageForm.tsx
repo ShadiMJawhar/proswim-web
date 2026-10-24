@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Loader2, AlertCircle, Save, Search, X, CalendarPlus, Printer, Link2, Unlink } from 'lucide-react';
+import { Loader2, AlertCircle, Save, Search, X, CalendarPlus, Printer, Link2, Unlink, Check } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
 import { toast } from '../components/Toast';
 import { PageHero } from '../components/PageHero';
 import { SmartBack } from '../components/SmartBack';
 import { fmtDate } from '../lib/dates';
+import { canGoBack } from '../lib/history';
 
 // Private package form (legacy PrivatePackagesIndividual.aspx): package
 // fields + parent/child links, and on an existing package the sessions
@@ -436,7 +437,10 @@ export function PrivatePackageForm() {
   }
 
   // ── Save ─────────────────────────────────────────────────────────────────
-  async function save() {
+  // close = "Save & Close": after saving, go back to the list the user came
+  // from (its filters and sort are kept, and it reloads), or to /privates.
+  const closeForm = () => { if (canGoBack()) navigate(-1); else navigate('/privates'); };
+  async function save(close = false) {
     // Legacy page validators (Required / dd/mm/yyyy / "Num" = digits only),
     // then the BtnSaveChanges_Click checks in the same order.
     if (!startDate) { setError('Start Date: Required.'); return; }
@@ -484,12 +488,18 @@ export function PrivatePackageForm() {
 
       if (isNew) {
         const r = await apiRequest<{ id: number }>('/api/portal/edit/private-package', { method: 'POST', body: JSON.stringify(payload) });
-        toast.success('Package created. You can now generate its sessions.');
-        // Legacy redirects to the new package so sessions can be generated.
-        navigate(`/privates/${r.id}`, { replace: true });
+        if (close) {
+          toast.success('Package created.');
+          closeForm();
+        } else {
+          toast.success('Package created. You can now generate its sessions.');
+          // Legacy redirects to the new package so sessions can be generated.
+          navigate(`/privates/${r.id}`, { replace: true });
+        }
       } else {
         const after = await apiRequest<Row>(`/api/portal/edit/private-package/${packageId}`, { method: 'PUT', body: JSON.stringify(payload) });
         toast.success('Package saved.');
+        if (close) { closeForm(); return; }
         if (after && typeof after === 'object') applyRecord(after);
         setSaving(false);
       }
@@ -892,14 +902,24 @@ ${rows}
       </div>
 
       {canSave && (
-        <div className="mt-6 flex justify-end">
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button
-            onClick={save}
+            onClick={() => save(false)}
             disabled={saving || !canSavePackage}
-            className="btn-grad flex items-center gap-2 rounded-xl text-sm font-semibold px-6 py-2.5 disabled:opacity-50"
+            title={isNew ? 'Create the package and stay on it to generate its sessions' : 'Save and stay on this package'}
+            className="flex items-center gap-2 rounded-xl border border-[#1e5c97]/30 bg-white text-[#1e5c97] text-sm font-semibold px-5 py-2.5 hover:bg-[#e8f0f8] disabled:opacity-50"
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             {isNew ? 'Create package' : 'Save changes'}
+          </button>
+          <button
+            onClick={() => save(true)}
+            disabled={saving || !canSavePackage}
+            title="Save and go back to the list (it reloads with your filters)"
+            className="btn-grad flex items-center gap-2 rounded-xl text-sm font-semibold px-6 py-2.5 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+            {isNew ? 'Create & Close' : 'Save & Close'}
           </button>
         </div>
       )}
