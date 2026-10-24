@@ -23,6 +23,7 @@ import { useUrlState } from '../lib/urlState';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
 
+import { useStickySort, routeGridKey } from '../lib/stickySort';
 type Row = Record<string, unknown>;
 type Option = { value: number; label: string };
 
@@ -56,8 +57,7 @@ const toDateInput = (v: unknown): string => {
 
 // Shared client-side sort + page machinery (legacy sorted/paged the cached table).
 function useGrid(rows: Row[], pageSize: number) {
-  const [sortKey, setSortKey] = useState('');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<string>(routeGridKey(), '');
   const [page, setPage] = useState(0);
 
   const sorted = useMemo(() => {

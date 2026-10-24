@@ -8,10 +8,11 @@ interface ChatMsg { role: 'user' | 'ai'; text: string; }
  * Right-edge AI assistant for super users: an AI "insights" feed generated from
  * today's live dashboard stats, plus a chat box to ask questions about the data.
  * Rendered as a fixed slide-over so it overlays without disturbing the layout.
- * Gate rendering with isSuperUser() at the call site.
+ * Opened from the "ProSwim AI" button in the sidebar (no floating tab: it sat
+ * on top of grids and buttons). Gate rendering with isSuperUser() at the call site.
  */
-export function AiPanel() {
-  const [open, setOpen] = useState(false);
+export function AiPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const setOpen = (v: boolean) => { if (!v) onClose(); };
 
   // Insights (AI overview of today's stats).
   const [overview, setOverview] = useState<string | null>(null);
@@ -45,10 +46,10 @@ export function AiPanel() {
   // Close on Escape.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, onClose]);
 
   // Keep the chat scrolled to the latest message.
   useEffect(() => {
@@ -69,19 +70,6 @@ export function AiPanel() {
 
   return (
     <>
-      {/* Right-edge open tab (hidden while the panel is open) */}
-      {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          aria-label="Open ProSwim AI assistant"
-          className="fixed right-0 top-1/2 -translate-y-1/2 z-40 flex items-center gap-1.5 rounded-l-xl px-2.5 py-3 text-white shadow-lg transition-transform hover:-translate-x-0.5"
-          style={{ background: 'linear-gradient(135deg, #1e5c97 0%, #202f4d 100%)' }}
-        >
-          <Sparkles className="size-5" />
-          <span className="text-xs font-semibold [writing-mode:vertical-rl] rotate-180 tracking-wide">ProSwim AI</span>
-        </button>
-      )}
-
       {/* Backdrop */}
       {open && (
         <div onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-slate-900/40" aria-hidden />

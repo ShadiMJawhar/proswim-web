@@ -11,6 +11,7 @@ import { PageHero } from '../components/PageHero';
 import { ColumnPicker } from '../components/ColumnPicker';
 import { useColumnPrefs } from '../lib/columnPrefs';
 
+import { useStickySort } from '../lib/stickySort';
 export interface StudentListItem {
   studentId: number;
   studentFullName: string | null;
@@ -139,8 +140,7 @@ export function StudentsPage() {
     initialSearch ? new URLSearchParams({ searchFor: initialSearch }).toString() : '');
 
   // grid state
-  const [sortKey, setSortKey] = useState<SortKey>('studentFullName');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<SortKey>('students', 'studentFullName');
   // Per-user column choice, saved in the DB (replaces "More columns").
   const colPrefs = useColumnPrefs('cols.students');
   const [page, setPage] = useState(0);

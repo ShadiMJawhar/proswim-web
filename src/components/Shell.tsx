@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Users, GraduationCap, CalendarDays, ClipboardCheck, UserRound,
@@ -6,7 +6,7 @@ import {
   PanelLeftClose, PanelLeftOpen, ChevronDown, Layers, Wrench, Wand2,
   Menu, X, Newspaper, Inbox, Megaphone, Medal, MapPin, CalendarX,
   Smartphone, MessageCircle, Settings, Bell, Wallet, Receipt, Truck,
-  Shield, Clock, MessageSquare, BarChart3, History, CalendarPlus, Globe, Search, ShieldCheck, Home, PowerOff, KeyRound,
+  Shield, Clock, MessageSquare, BarChart3, History, CalendarPlus, Globe, Search, ShieldCheck, Home, PowerOff, KeyRound, Sparkles,
 } from 'lucide-react';
 import { getStoredUser, clearAuth, apiRequest, isSuperUser } from '../api/portalApi';
 import { IntroSplash } from './IntroSplash';
@@ -310,6 +310,8 @@ export function Shell() {
     });
   }
 
+  const [aiOpen, setAiOpen] = useState(false);
+  const closeAi = useCallback(() => setAiOpen(false), []);
   const [signingOut, setSigningOut] = useState(false);
   function logout() {
     if (signingOut) return;
@@ -487,6 +489,16 @@ export function Shell() {
               <p className="text-[10px] text-white/50 truncate">{user?.userType || ''}</p>
             </>
           )}
+          {superU && (
+            <button
+              onClick={() => setAiOpen(true)}
+              title="ProSwim AI assistant"
+              className={`flex items-center text-xs text-white/60 hover:text-white ${rail ? 'justify-center' : 'gap-1.5 mt-2'}`}
+            >
+              <Sparkles className="size-3.5 shrink-0" />
+              {!rail && 'ProSwim AI'}
+            </button>
+          )}
           <button
             onClick={() => navigate('/change-password')}
             title="Change password"
@@ -523,7 +535,7 @@ export function Shell() {
       </main>
 
       {/* AI assistant — super users only */}
-      {isSuperUser(user) && <AiPanel />}
+      {isSuperUser(user) && <AiPanel open={aiOpen} onClose={closeAi} />}
       <CommandPalette />
       <ToastHost />
     </div>

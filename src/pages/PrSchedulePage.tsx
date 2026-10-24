@@ -506,7 +506,7 @@ function FragmentRows({
           {coach.name}
           {coach.remark && (
             <span title={coach.remark} className="inline-flex align-middle ml-1">
-              <StickyNote className="size-3.5 text-amber-600" />
+              <StickyNote className="size-5 text-amber-600" />
             </span>
           )}
           {/* Legacy shows the CoachPrivate remark link on read-only views too. */}
@@ -515,9 +515,9 @@ function FragmentRows({
               type="button"
               onClick={onCoachRemark}
               title={coach.remark ? 'Edit coach remark' : 'Add coach remark'}
-              className="inline-flex align-middle ml-1 text-slate-500 hover:text-amber-600"
+              className="inline-flex align-middle ml-1 p-1 rounded text-slate-500 hover:text-amber-600 hover:bg-white/80"
             >
-              <MessageSquarePlus className="size-3.5" />
+              <MessageSquarePlus className="size-5" />
             </button>
           )}
           {coach.remark && <span className="ml-2 font-normal text-xs text-slate-600">{coach.remark}</span>}
@@ -579,8 +579,8 @@ function FragmentRows({
                     {/* Legacy: a free-time row's remark link is hidden when read-only,
                         a slot with no row at all always has it. */}
                     {canRemark && (sessions.length === 0 || !readOnly) && (
-                      <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
-                        <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-400'} hover:text-amber-600`} />
+                      <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'} className="p-0.5 rounded hover:bg-white/80">
+                        <MessageSquarePlus className={`size-4 ${remark ? 'text-amber-600' : 'text-slate-400'} hover:text-amber-600`} />
                       </button>
                     )}
                     <span>{remark}</span>
@@ -650,24 +650,24 @@ function FragmentRows({
                     </div>
                     {/* Actions: package + add payment (hidden in read-only), slot remark
                         (legacy shows it on read-only views too), phone */}
-                    <div className="flex items-center gap-1.5 mt-1">
+                    <div className="flex items-center gap-0.5 mt-1 -ml-1">
                       {!readOnly && (
                         <>
-                          <Link to={`/privates/${n(r.PackageId)}`} title="Open package">
-                            <Package className="size-3 text-slate-600 hover:text-[#1e5c97]" />
+                          <Link to={`/privates/${n(r.PackageId)}`} title="Open package" className="p-1 rounded hover:bg-white/80">
+                            <Package className="size-5 text-slate-600 hover:text-[#1e5c97]" />
                           </Link>
-                          <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment">
-                            <CreditCard className={`size-3 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
+                          <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment" className="p-1 rounded hover:bg-white/80">
+                            <CreditCard className={`size-5 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
                           </Link>
                         </>
                       )}
                       {canRemark && (
-                        <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'}>
-                          <MessageSquarePlus className={`size-3 ${remark ? 'text-amber-600' : 'text-slate-600'} hover:text-amber-600`} />
+                        <button type="button" onClick={() => onSlotRemark(d, t)} title={remark ? 'Edit slot remark' : 'Add slot remark'} className="p-1 rounded hover:bg-white/80">
+                          <MessageSquarePlus className={`size-5 ${remark ? 'text-amber-600' : 'text-slate-600'} hover:text-amber-600`} />
                         </button>
                       )}
-                      <button type="button" onClick={() => onPhone(n(r.Std1ID))} title="Show phone">
-                        <Phone className="size-3 text-slate-600 hover:text-[#1e5c97]" />
+                      <button type="button" onClick={() => onPhone(n(r.Std1ID))} title="Show phone" className="p-1 rounded hover:bg-white/80">
+                        <Phone className="size-5 text-slate-600 hover:text-[#1e5c97]" />
                       </button>
                       {phones[n(r.Std1ID)] && (
                         <span className="text-[9px] font-semibold text-[#1e5c97] bg-white/70 rounded px-1">

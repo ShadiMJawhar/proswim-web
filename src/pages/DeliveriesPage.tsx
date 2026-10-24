@@ -20,6 +20,7 @@ import { useUrlState, useUrlPatch } from '../lib/urlState';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
 
+import { useStickySort, routeGridKey } from '../lib/stickySort';
 type Row = Record<string, unknown>;
 type Option = { value: number; label: string };
 
@@ -279,8 +280,7 @@ function groupHeaderForPrint(h: Row) {
 
 // Client-side sort + page machinery (legacy sorted/paged the cached DataTable).
 function useGrid(rows: Row[], pageSize: number) {
-  const [sortKey, setSortKey] = useState('');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<string>(routeGridKey(), '');
   const [page, setPage] = useState(0);
 
   const sorted = useMemo(() => {

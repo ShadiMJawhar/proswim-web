@@ -365,10 +365,10 @@ export function GSchedulePage() {
                                     name: `${coach} · ${s(ts.ClassDay)} ${s(ts.ClassTime)}`,
                                     value: classRemark,
                                   })}
-                                  title={classRemark ? `Class remark: ${classRemark}` : 'Add class remark'}>
+                                  title={classRemark ? `Class remark: ${classRemark}` : 'Add class remark'} className="p-0.5 rounded hover:bg-white/80">
                                   {classRemark
-                                    ? <StickyNote className="size-3.5 text-amber-600" />
-                                    : <MessageSquarePlus className="size-3.5 text-slate-400 hover:text-amber-600" />}
+                                    ? <StickyNote className="size-5 text-amber-600" />
+                                    : <MessageSquarePlus className="size-5 text-slate-400 hover:text-amber-600" />}
                                 </button>
                               )}
                               {(!canAct || !classId) && classRemark && (
@@ -417,8 +417,8 @@ export function GSchedulePage() {
                                       </span>
                                     )}
                                     {canAct && (
-                                      <button type="button" onClick={() => togglePhone(phoneKey)} title="Show phone">
-                                        <Phone className="size-3 text-slate-500 hover:text-[#1e5c97]" />
+                                      <button type="button" onClick={() => togglePhone(phoneKey)} title="Show phone" className="p-0.5 rounded hover:bg-white/80">
+                                        <Phone className="size-4 text-slate-500 hover:text-[#1e5c97]" />
                                       </button>
                                     )}
                                     {canAct && shownPhones.has(phoneKey) && (
@@ -428,17 +428,17 @@ export function GSchedulePage() {
                                     )}
                                     {isBirthdayNear(r.DOB) && (
                                       <span title={toDMY(r.DOB)}>
-                                        <Cake className="size-3 text-pink-500" />
+                                        <Cake className="size-4 text-pink-500" />
                                       </span>
                                     )}
                                     {/* Remark: view + edit (empty state shows an add icon) */}
                                     {canAct && (
                                       <button type="button"
                                         onClick={() => setRemarkModal({ type: 'Student', id: n(r.studentid), name: s(r.StudentName), value: s(r.StudentRemark) })}
-                                        title={s(r.StudentRemark) || 'Add remark'}>
+                                        title={s(r.StudentRemark) || 'Add remark'} className="p-0.5 rounded hover:bg-white/80">
                                         {s(r.StudentRemark).length > 1
-                                          ? <StickyNote className="size-3 text-amber-600" />
-                                          : <MessageSquarePlus className="size-3 text-slate-300 hover:text-amber-600" />}
+                                          ? <StickyNote className="size-4 text-amber-600" />
+                                          : <MessageSquarePlus className="size-4 text-slate-300 hover:text-amber-600" />}
                                       </button>
                                     )}
                                   </div>

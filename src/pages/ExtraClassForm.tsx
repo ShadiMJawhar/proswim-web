@@ -16,6 +16,7 @@ import { toast } from '../components/Toast';
 import { canGoBack } from '../lib/history';
 import { toDate } from '../lib/dates';
 
+import { useStickySort } from '../lib/stickySort';
 type Row = Record<string, unknown>;
 type Option = { value: number; label: string };
 type Picker = { id: number; label: string };
@@ -139,8 +140,7 @@ export function ExtraClassForm() {
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
   const [savingRows, setSavingRows] = useState(false);
-  const [sortKey, setSortKey] = useState<'ExtraClassSessionAttended' | 'ExtraClassSessionDate'>('ExtraClassSessionAttended');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<'ExtraClassSessionAttended' | 'ExtraClassSessionDate'>('extra-class-sessions', 'ExtraClassSessionAttended');
   const [genOpen, setGenOpen] = useState(false);
   const [genDate, setGenDate] = useState('');
   const [genTime1, setGenTime1] = useState('15:30');

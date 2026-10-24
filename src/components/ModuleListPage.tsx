@@ -12,6 +12,7 @@ import { PageHero } from './PageHero';
 import { ColumnPicker, type PickerSection } from './ColumnPicker';
 import { useColumnPrefs, columnPrefKey } from '../lib/columnPrefs';
 
+import { useStickySort } from '../lib/stickySort';
 // Generic, config-driven list page: filter bar → portal API endpoint that
 // returns name-keyed proc rows → sortable, paginated grid with CSV export.
 
@@ -31,6 +32,9 @@ export interface ColumnDef {
   totalBy?: string;
   /** Only these user types (lower-case) see this column's total. */
   totalRoles?: string[];
+  /** With totalBy: sum only the rows of this group value (e.g. 'USD') and
+   *  show it as one figure, "$79,090" (no LBP line). */
+  totalOnly?: string;
   /** Hide the column for the current filters / user type, e.g. the legacy
    *  Due report hiding Phone/Total/Paid/OnHold outside the user's location. */
   hiddenWhen?: (values: FilterValues, role: string) => boolean;
@@ -105,6 +109,8 @@ export interface ModuleConfig {
   canEditRows?: (values: FilterValues, role: string) => boolean;
   /** Base route for add/edit forms (e.g. "/semesters"). Enables Add New + row Edit. */
   editBase?: string;
+  /** Show the Edit pencil as the FIRST column instead of the last. */
+  editFirst?: boolean;
   /** Filter params forwarded to the Add New form as query params (e.g.
    *  ['locationId'] so the new record defaults to the selected location). */
   newLinkParams?: string[];
@@ -121,6 +127,12 @@ const PAGE_SIZE = 50;
 /** Footer cell for a `totalBy` column: one sum per distinct group value,
  *  e.g. "LBP 1,200 / USD 300" (groups sorted so the output is stable). */
 function totalsBy(rows: Row[], col: ColumnDef): string {
+  if (col.totalOnly) {
+    const only = col.totalOnly.toUpperCase();
+    let sum = 0;
+    for (const r of rows) if (String(r[col.totalBy!] ?? '').trim().toUpperCase() === only) sum += Number(r[col.key]) || 0;
+    return `${only === 'USD' ? '$' : only + ' '}${sum.toLocaleString()}`;
+  }
   const sums = new Map<string, number>();
   for (const r of rows) {
     const g = String(r[col.totalBy!] ?? '');
@@ -265,8 +277,8 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [sortKey, setSortKey] = useState('');
-  const [sortAsc, setSortAsc] = useState(true);
+  // Sort is remembered per list (survives refresh / coming back from a form).
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<string>(columnPrefKey(config.endpoint).replace(/^cols\./, ''), '');
   // Per-user column choice (saved in the DB); replaces "More columns".
   // Keyed by endpoint (incl. its query, e.g. ?mode=extra) so each list has its own.
   const colPrefs = useColumnPrefs(columnPrefKey(config.endpoint));
@@ -463,6 +475,26 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   const selectCls =
     'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
 
+  // Row Edit pencil (last column, or first with config.editFirst).
+  const editCell = (r: Row) => (
+                      <td className="px-3 py-2.5 text-right">
+                        <button
+                          onClick={() => {
+                            // Legacy _AccessReadOnly: the Edit link refuses with an alert.
+                            if (config.canEditRows?.(values, userRole) === false) {
+                              window.alert('You do not have permission to do this action');
+                              return;
+                            }
+                            navigate(`${config.editBase}/${rowId(r, config.idKey)}`);
+                          }}
+                          title="Edit"
+                          className="text-[#1e5c97] hover:text-[#17497a]"
+                        >
+                          <Pencil className="size-4" />
+                        </button>
+                      </td>
+  );
+
   return (
     <div className="p-6">
       <PageHero
@@ -616,17 +648,21 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
             <table className="tbl w-full text-sm whitespace-nowrap">
               <thead>
                 <tr className="text-left text-xs text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                  {canEdit && config.editFirst && <th className="px-3 py-3 font-semibold">Edit</th>}
                   {cols.map((c) => (
                     <th key={c.key + c.label} className="px-3 py-3 font-semibold">
-                      <button type="button" onClick={() => toggleSort(c.key)} className="flex items-center gap-1 hover:text-slate-600">
-                        {c.label}
-                        {sortKey === c.key
-                          ? (sortAsc ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)
-                          : <ArrowUpDown className="size-3 opacity-40" />}
-                      </button>
+                      {/* Action columns (no title, e.g. Pay) aren't sortable. */}
+                      {c.label ? (
+                        <button type="button" onClick={() => toggleSort(c.key)} className="flex items-center gap-1 hover:text-slate-600">
+                          {c.label}
+                          {sortKey === c.key
+                            ? (sortAsc ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)
+                            : <ArrowUpDown className="size-3 opacity-40" />}
+                        </button>
+                      ) : null}
                     </th>
                   ))}
-                  {canEdit && <th className="px-3 py-3 font-semibold text-right">Edit</th>}
+                  {canEdit && !config.editFirst && <th className="px-3 py-3 font-semibold text-right">Edit</th>}
                 </tr>
               </thead>
               <tbody>
@@ -635,6 +671,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                     key={String(rowId(r, config.idKey) ?? i)}
                     className={`border-b border-slate-50 last:border-0 ${config.rowClass?.(r) ?? ''}`}
                   >
+                    {canEdit && config.editFirst && editCell(r)}
                     {cols.map((c) => {
                       const custom = config.renderCell?.(r, c, load);
                       return (
@@ -643,24 +680,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                         </td>
                       );
                     })}
-                    {canEdit && (
-                      <td className="px-3 py-2.5 text-right">
-                        <button
-                          onClick={() => {
-                            // Legacy _AccessReadOnly: the Edit link refuses with an alert.
-                            if (config.canEditRows?.(values, userRole) === false) {
-                              window.alert('You do not have permission to do this action');
-                              return;
-                            }
-                            navigate(`${config.editBase}/${rowId(r, config.idKey)}`);
-                          }}
-                          title="Edit"
-                          className="text-[#1e5c97] hover:text-[#17497a]"
-                        >
-                          <Pencil className="size-4" />
-                        </button>
-                      </td>
-                    )}
+                    {canEdit && !config.editFirst && editCell(r)}
                   </tr>
                 ))}
                 {pageRows.length === 0 && (
@@ -674,16 +694,20 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
               {hasTotals && sorted.length > 0 && (
                 <tfoot>
                   <tr className="border-t-2 border-slate-200 font-bold text-slate-700 bg-slate-50/60">
+                    {canEdit && config.editFirst && <td className="px-3 py-2.5">Total</td>}
                     {cols.map((c, idx) => (
-                      <td key={c.key + c.label} className="px-3 py-2.5 whitespace-nowrap">
-                        {!showTotal(c)
-                          ? (idx === 0 ? 'Total' : '')
-                          : c.totalBy
-                            ? totalsBy(sorted, c)
-                            : Number(sorted.reduce((s, r) => s + (Number(r[c.key]) || 0), 0)).toLocaleString()}
+                      <td key={c.key + c.label} className="px-3 py-2.5">
+                        {/* w-0 + min-w-full: a long total never widens its column. */}
+                        <div className="w-0 min-w-full whitespace-nowrap">
+                          {!showTotal(c)
+                            ? (idx === 0 && !(canEdit && config.editFirst) ? 'Total' : '')
+                            : c.totalBy
+                              ? totalsBy(sorted, c)
+                              : Number(sorted.reduce((s, r) => s + (Number(r[c.key]) || 0), 0)).toLocaleString()}
+                        </div>
                       </td>
                     ))}
-                    {canEdit && <td />}
+                    {canEdit && !config.editFirst && <td />}
                   </tr>
                 </tfoot>
               )}

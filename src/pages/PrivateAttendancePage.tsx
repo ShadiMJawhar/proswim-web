@@ -16,6 +16,7 @@ import { PageHero } from '../components/PageHero';
 import { toast } from '../components/Toast';
 import { toDate } from '../lib/dates';
 
+import { useStickySort } from '../lib/stickySort';
 type Opt = { value: number; label: string };
 
 interface Row {
@@ -168,6 +169,15 @@ export function PrivateAttendancePage() {
   const criteria = params.get('criteria') ?? '';
   const onlyActive = params.has('onlyActive') ? params.get('onlyActive') === 'true' : !params.has('criteria');
   const current: Filters = { dateFrom, dateTo, locationIds, criteria, onlyActive };
+  // Coach filter (user request 2026-10-24): narrows the loaded sessions on the
+  // page; kept in the URL so it survives refresh / saving.
+  const coachFilter = params.get('coach') ?? '';
+  const setCoachFilter = (v: string) =>
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v) next.set('coach', v); else next.delete('coach');
+      return next;
+    }, { replace: true });
 
   // One navigation for all keys (react-router's functional setter reads the
   // render-time params, so sequential single-key sets would clobber each other).
@@ -185,8 +195,7 @@ export function PrivateAttendancePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
-  const [sortKey, setSortKey] = useState<keyof Row>('PrivateSessionTime');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<keyof Row>('pr-attendance', 'PrivateSessionTime');
   const [locOpen, setLocOpen] = useState(false);
   const locBox = useRef<HTMLDivElement>(null);
 
@@ -259,8 +268,13 @@ export function PrivateAttendancePage() {
     : `${selectedLocs.length} locations`;
 
   // ── grid state ────────────────────────────────────────────────────────────
+  const coachOptions = useMemo(() => {
+    const names = new Set(rows.map((r) => r.CoachFullName).filter(Boolean));
+    if (coachFilter) names.add(coachFilter);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [rows, coachFilter]);
   const sorted = useMemo(() => {
-    const arr = [...rows];
+    const arr = coachFilter ? rows.filter((r) => r.CoachFullName === coachFilter) : [...rows];
     arr.sort((a, b) => {
       const va = a[sortKey], vb = b[sortKey];
       const cmp =
@@ -270,7 +284,7 @@ export function PrivateAttendancePage() {
       return sortAsc ? cmp : -cmp;
     });
     return arr;
-  }, [rows, sortKey, sortAsc]);
+  }, [rows, sortKey, sortAsc, coachFilter]);
 
   function toggleSort(key: keyof Row) {
     if (sortKey === key) setSortAsc((x) => !x);
@@ -396,7 +410,7 @@ export function PrivateAttendancePage() {
     <div className="p-6">
       <PageHero
         title="Private Daily Attendance"
-        subtitle={loading ? 'Loading…' : `${rows.length} Sessions`}
+        subtitle={loading ? 'Loading…' : coachFilter ? `${sorted.length} of ${rows.length} Sessions · ${coachFilter}` : `${rows.length} Sessions`}
         right={
           <div className="flex items-center gap-2">
             {rows.length > 0 && (
@@ -472,6 +486,10 @@ export function PrivateAttendancePage() {
         </label>
         <select value={criteria} onChange={(e) => applyFilter({ criteria: e.target.value })} className={inputCls}>
           {CRITERIA.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </select>
+        <select value={coachFilter} onChange={(e) => setCoachFilter(e.target.value)} className={inputCls} title="Show one coach's sessions">
+          <option value="">All Coaches</option>
+          {coachOptions.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <label className="flex items-center gap-1 text-xs text-slate-500 select-none px-1">
           <input type="checkbox" checked={onlyActive} onChange={(e) => applyFilter({ onlyActive: e.target.checked })} className="accent-[#1e5c97]" />

@@ -13,6 +13,7 @@ import { PageHero } from '../components/PageHero';
 import { toast } from '../components/Toast';
 import { toDate } from '../lib/dates';
 
+import { useStickySort, routeGridKey } from '../lib/stickySort';
 type Opt = { value: string; label: string };
 
 interface Row {
@@ -176,8 +177,7 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
-  const [sortKey, setSortKey] = useState<keyof Row>('ExtraClassSessionTime');
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortKey, setSortKey, sortAsc, setSortAsc] = useStickySort<keyof Row>(routeGridKey(), 'ExtraClassSessionTime');
 
   useEffect(() => {
     apiRequest<{ locations: { value: number; label: string }[] }>('/api/portal/modules/lookups')

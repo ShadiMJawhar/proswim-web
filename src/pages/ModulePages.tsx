@@ -248,9 +248,12 @@ const notRenewed: ModuleConfig = {
 
 function privatePackagesConfig(): ModuleConfig {
   // Built per render: the feedback block depends on the signed-in user, and
-  // the legacy date window (1 Jan last year → 1 Jan next year) on today.
+  // the date window on today. From (user rule 2026-10-24): July onwards → 1 Jan
+  // of this year; January–June → 1 Jan of last year. To: 1 Jan next year.
   const fbRoles = isFeedbackUser() ? undefined : SITEMASTER;
-  const y = new Date().getFullYear();
+  const now = new Date();
+  const y = now.getFullYear();
+  const fromYear = now.getMonth() >= 6 ? y : y - 1;
   // Legacy "Pr-Feedback" menu link (?Feedback=true): all statuses, only
   // packages whose feedback was requested and filled.
   const fbLink = !fbRoles && new URLSearchParams(window.location.search).get('Feedback') === 'true';
@@ -260,12 +263,14 @@ function privatePackagesConfig(): ModuleConfig {
     lookups: LOOKUPS,
     idKey: 'PackageId',
     editBase: '/privates',
+    // Edit + Pay first, so they're reachable without scrolling (user, 2026-10-24).
+    editFirst: true,
     // Legacy filter order and AutoPostBack: every filter applies on change; the
     // free-text search keeps the Search button.
     filters: [
       { param: 'locationIds', label: 'Location', type: 'multiselect', optionsKey: 'locations', width: 'w-40', autoSubmit: true, lockedFor: ['user'] },
       { param: 'searchFor', label: 'Search…', type: 'text' },
-      { param: 'dateFrom', label: 'From', type: 'date', initial: `${y - 1}-01-01`, autoSubmit: true },
+      { param: 'dateFrom', label: 'From', type: 'date', initial: `${fromYear}-01-01`, autoSubmit: true },
       { param: 'dateTo', label: 'To', type: 'date', initial: `${y + 1}-01-01`, autoSubmit: true },
       { param: 'status', label: 'ALL Statuses', type: 'select', options: PRIVATE_PACKAGE_STATUSES, initial: fbLink ? '' : 'Active', autoSubmit: true },
       // Legacy ddlCurrency: checkbox list, both ticked.
@@ -299,6 +304,7 @@ function privatePackagesConfig(): ModuleConfig {
       return <>{btn('coach', 'Coaches Stats')}{btn('location', 'Location Stats')}</>;
     },
     columns: [
+      { key: '_pay', label: '' },
       { key: 'LocationNickName', label: 'Loc' },
       { key: 'CoachFullName', label: 'Coach' },
       { key: 'PackageDesc', label: 'Package' },
@@ -307,8 +313,8 @@ function privatePackagesConfig(): ModuleConfig {
       { key: 'PackageNumberOfSessions', label: 'Sessions', total: true },
       { key: 'SessionsLeft', label: 'Avlb', total: true },
       { key: 'PackageCurrency', label: 'Curr' },
-      { key: 'PackageAmount', label: 'Amount', format: 'money', totalBy: 'PackageCurrency', totalRoles: SITEMASTER },
-      { key: 'DuePayment', label: 'Due', format: 'money', totalBy: 'PackageCurrency', totalRoles: SITEMASTER },
+      { key: 'PackageAmount', label: 'Amount', format: 'money', totalBy: 'PackageCurrency', totalOnly: 'USD', totalRoles: SITEMASTER },
+      { key: 'DuePayment', label: 'Due', format: 'money', totalBy: 'PackageCurrency', totalOnly: 'USD', totalRoles: SITEMASTER },
       { key: 'Phone', label: 'Phone' },
       { key: 'PackageRemarks', label: 'Remarks' },
       { key: 'PackageStatus', label: 'Status' },
@@ -328,7 +334,6 @@ function privatePackagesConfig(): ModuleConfig {
       { key: 'FeedbackFollowUpStatus', label: 'Followup', group: 'feedback' },
       { key: 'FeedbackFollowUpMasterStatus', label: 'Approved', group: 'feedback' },
       { key: '_followup', label: '', group: 'feedback' },
-      { key: '_pay', label: '' },
     ],
     rowClass: (row) => PACKAGE_ROW_CLASS[String(row.PackageStatus ?? '')] ?? '',
     renderCell: (row, col) => {
