@@ -85,7 +85,10 @@ export function AddonFormPage() {
         setType(String(r.AddonType ?? ''));
         setCurrency(String(r.AddonCurrency ?? 'USD'));
         setTotal(Number(r.AddonAmount ?? 0));
-        setCount(Number(r.AddonCount ?? 1) || 1);
+        // Mnths covers every line that has an amount (a saved count can be
+        // lower when lines were typed in by hand).
+        const lastPaid = Array.from({ length: 12 }, (_, i) => Number(r[`Payment${i + 1}`] ?? 0)).findLastIndex((a) => a !== 0);
+        setCount(Math.max(Number(r.AddonCount ?? 1) || 1, lastPaid + 1));
         setRemarks(String(r.AddonRemarks ?? ''));
         if (r.AddonDate) setDate(new Date(String(r.AddonDate)).toISOString().slice(0, 10));
         setPayments(Array.from({ length: 12 }, (_, i) => ({
@@ -248,7 +251,9 @@ export function AddonFormPage() {
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
           {payments.map((p, i) => (
-            <div key={i} className={`flex items-center gap-2 ${i >= count ? 'opacity-40' : ''}`}>
+            // Faded only when outside the Mnths count AND empty: a line with an
+            // amount is paid, so it always shows at full strength.
+            <div key={i} className={`flex items-center gap-2 ${i >= count && !p.amount ? 'opacity-40' : ''}`}>
               <span className="text-xs font-bold text-slate-400 w-6">#{i + 1}</span>
               <input type="number" value={p.amount}
                 onChange={(e) => setPayments((prev) => prev.map((x, j) => (j === i ? { ...x, amount: Number(e.target.value) } : x)))}
