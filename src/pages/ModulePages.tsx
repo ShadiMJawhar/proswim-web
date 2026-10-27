@@ -36,11 +36,13 @@ const NEED_ATTENTION = [
 ];
 
 // Legacy PrivatePackagesList txtPackageStatus (same values, labels and order;
-// "" = ALL Statuses). No "Transfer" item there.
+// "" = ALL Statuses). No "Transfer" item there. Plus "Closed-Stopped"
+// (user, 2026-10-27; the procs treat it like Closed).
 const PRIVATE_PACKAGE_STATUSES: FilterOption[] = [
   { value: 'Active', label: 'Active' },
   { value: 'ClosedNeedPayment', label: 'Closed Need Payment' },
   { value: 'Closed', label: 'Closed' },
+  { value: 'ClosedStopped', label: 'Closed-Stopped' },
   { value: 'MovedtoGroup', label: 'MovedtoGroup' },
   { value: 'Freeze', label: 'Freeze' },
   { value: 'Cancelled', label: 'Cancelled' },
@@ -67,6 +69,7 @@ const SITEMASTER = ['sitemaster'];
 // Legacy PrivatePackagesList row tints by PackageStatus.
 const PACKAGE_ROW_CLASS: Record<string, string> = {
   Closed: 'bg-green-100',
+  ClosedStopped: 'bg-lime-100',
   ClosedNeedPayment: 'bg-orange-100',
   MovedtoGroup: 'bg-sky-100',
   Freeze: 'bg-pink-100',

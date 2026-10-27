@@ -48,6 +48,7 @@ const STUDENT_SLOTS = [0, 1, 2] as const;
 const PACKAGE_STATUSES = [
   { value: 'Active', label: 'Active' },
   { value: 'Closed', label: 'Closed' },
+  { value: 'ClosedStopped', label: 'Closed-Stopped' },
   { value: 'ClosedNeedPayment', label: 'Closed Need Payment' },
   { value: 'MovedtoGroup', label: 'MovedtoGroup' },
   { value: 'Freeze', label: 'Freeze' },
@@ -231,7 +232,7 @@ export function PrivatePackageForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const isClosed = savedStatus === 'Closed';
+  const isClosed = savedStatus === 'Closed' || savedStatus === 'ClosedStopped';
   // Legacy ShowDataToEdit on a Closed package: Save Changes stays enabled only
   // for SiteMaster; the session buttons are disabled for everyone.
   const canSavePackage = canSave && (!isClosed || isSiteMaster);
