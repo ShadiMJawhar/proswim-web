@@ -186,9 +186,6 @@ export function GSchedulePage() {
 
   const counts = data?.counts;
   const classLink = (classId: number) => `/classes/${classId}`;
-  const sessionsLink = (classId: number) => `/sessions?${new URLSearchParams({
-    classId: String(classId), semesterId: String(semesterId), locationId: String(locationId), date: '',
-  })}`;
   const payLink = (r: Row) => `/payments/new?${new URLSearchParams({
     studentId: String(n(r.studentid)), studentName: s(r.StudentName), semesterId: String(semesterId),
   })}`;
@@ -345,13 +342,15 @@ export function GSchedulePage() {
                               {level && (canAct && classId
                                 ? <Link to={classLink(classId)} className="text-[#dd22aa] font-bold text-[12px] hover:underline">[{level}]</Link>
                                 : <span className="text-[#1e5c97] font-bold text-[12px]">[{level}]</span>)}
-                              {/* [count] → the class's sessions/attendance (empty cell: the class) */}
+                              {/* [count] → take the attendance of the class's latest session, like
+                                  legacy OpenWindowForAttendance (ClassesSessionsAttendanceList.aspx?ClassID=);
+                                  an empty cell opens the class instead. */}
                               {canAct && classId
                                 ? (
                                   <Link
-                                    to={students.length > 0 ? sessionsLink(classId) : classLink(classId)}
+                                    to={students.length > 0 ? `/classes/${classId}/attendance` : classLink(classId)}
                                     className="font-bold text-red-600 hover:underline"
-                                    title={students.length > 0 ? 'Class attendance' : 'Open class'}
+                                    title={students.length > 0 ? 'Take attendance (latest session)' : 'Open class'}
                                   >
                                     [{students.length}]
                                   </Link>

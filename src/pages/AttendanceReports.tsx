@@ -16,12 +16,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Loader2, AlertCircle, Search, Download, ClipboardCheck, ChevronLeft, ChevronRight,
-  ArrowUpDown, ArrowUp, ArrowDown, User,
+  ArrowUpDown, ArrowUp, ArrowDown, User, CalendarClock, ListChecks,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
+import { toast } from '../components/Toast';
+import { MakeupModal } from './TakeAttendancePage';
 
 import { useStickySort, routeGridKey } from '../lib/stickySort';
 type Row = Record<string, unknown>;
@@ -417,10 +419,21 @@ function rollingDefaultFrom(): string {
   return `${y}-${String(m - 3).padStart(2, '0')}-01`;
 }
 
+// Make-up date + class as two columns. The details proc now returns MakeUpDate /
+// MakeUpClassName; until it is updated on a server, both are split out of the
+// legacy MakeupInfo string ("Oct 27 2026 Coach - Tue - 16:30").
+function withMakeupColumns(r: Row): Row {
+  if (pick(r, 'MakeUpClassName') !== undefined) return r;
+  const m = str(r, 'MakeupInfo').match(/^([A-Za-z]{3}\s+\d{1,2}\s+\d{4})\s*(.*)$/);
+  return { ...r, MakeUpDate: m ? m[1] : '', MakeUpClassName: m ? m[2] : str(r, 'MakeupInfo') };
+}
+
 export function AttendanceDetailsPage() {
   const user = getStoredUser();
   const locationLocked = (user?.userType || '').toLowerCase() === 'user' && !!user?.primaryLocationId;
+  const canSave = user?.canSave !== false && (user?.userType || '').toLowerCase() !== 'guest';
   const [params] = useSearchParams();
+  const [makeupFor, setMakeupFor] = useState<Row | null>(null);
 
   const [locations, setLocations] = useState<Option[]>([]);
   const [semesters, setSemesters] = useState<Option[]>([]);
@@ -500,7 +513,7 @@ export function AttendanceDetailsPage() {
     if (dateTo) q.set('dateTo', dateTo);
     if (effectiveSearch.trim()) q.set('searchFor', effectiveSearch.trim());
     apiRequest<Row[]>(`/api/portal/reports/attendance-details?${q}`)
-      .then((data) => { setRows(data); grid.setPage(0); })
+      .then((data) => { setRows(data.map(withMakeupColumns)); grid.setPage(0); })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load the report.'))
       .finally(() => setLoading(false));
   }
@@ -527,8 +540,10 @@ export function AttendanceDetailsPage() {
   const CSV_COLS: [string, string][] = [
     ['StudentFullName', 'Name'], ['StudentPhoneNumber1', 'Phone'], ['SessionDate', 'Date'],
     ['ClassName', 'Class'], ['AttendanceStatus', 'Status'], ['AttendanceRemarks', 'Remarks'],
-    ['AttendanceStudentAttended', 'Attended'], ['MakeUpInfo', 'Makeuped'],
+    ['AttendanceStudentAttended', 'Attended'], ['MakeUpDate', 'Make-up date'], ['MakeUpClassName', 'Make-up class'],
   ];
+  // The Make-up dialog needs the row id, which only the updated proc returns.
+  const canMakeup = (r: Row) => canSave && pick(r, 'AttendanceId') !== undefined;
 
   return (
     <div className="p-6 md:p-8">
@@ -630,6 +645,7 @@ export function AttendanceDetailsPage() {
           <table className="tbl w-full text-base whitespace-nowrap [&_td]:py-3 [&_th]:py-3 [&_td]:px-3 [&_th]:px-3">
             <thead>
               <tr>
+                <th className="text-left font-semibold">Actions</th>
                 <SortHeader label="Name" k="StudentFullName" grid={grid} />
                 <SortHeader label="Phone" k="StudentPhoneNumber1" grid={grid} />
                 <SortHeader label="Date" k="SessionDate" grid={grid} />
@@ -637,15 +653,34 @@ export function AttendanceDetailsPage() {
                 <SortHeader label="Status" k="AttendanceStatus" grid={grid} />
                 <SortHeader label="Remarks" k="AttendanceRemarks" grid={grid} />
                 <SortHeader label="Attended" k="AttendanceStudentAttended" grid={grid} />
-                <SortHeader label="Makeuped" k="MakeUpInfo" grid={grid} />
+                <SortHeader label="Make-up date" k="MakeUpDate" grid={grid} />
+                <SortHeader label="Make-up class" k="MakeUpClassName" grid={grid} />
               </tr>
             </thead>
             <tbody>
               {grid.pageRows.length === 0 && (
-                <tr><td colSpan={8} className="text-center text-slate-400 py-6">No records found.</td></tr>
+                <tr><td colSpan={10} className="text-center text-slate-400 py-6">No records found.</td></tr>
               )}
               {grid.pageRows.map((r, i) => (
                 <tr key={i} className={stoppedCls(r)}>
+                  <td className="whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
+                      {/* Legacy "Details" → the session's attendance list */}
+                      {num(r, 'AttendanceSessionId') > 0 && (
+                        <Link to={`/sessions/${num(r, 'AttendanceSessionId')}/attendance`} title="Open this session's attendance"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-[#1e5c97] hover:bg-[#e8f0f8]">
+                          <ListChecks className="size-3.5" /> Session
+                        </Link>
+                      )}
+                      {canMakeup(r) && (
+                        <button type="button" onClick={() => setMakeupFor(r)}
+                          title={str(r, 'MakeUpClassName') ? 'Change the make-up session' : 'Assign a make-up session'}
+                          className="inline-flex items-center gap-1 rounded-lg border border-lime-300 bg-lime-50 px-2 py-1 text-xs font-semibold text-lime-800 hover:bg-lime-100">
+                          <CalendarClock className="size-3.5" /> {str(r, 'MakeUpClassName') ? 'Change make-up' : 'Make-up'}
+                        </button>
+                      )}
+                    </div>
+                  </td>
                   <td className="font-semibold">{str(r, 'StudentFullName')}</td>
                   <td>{str(r, 'StudentPhoneNumber1')}</td>
                   <td>{dmy(r.SessionDate)}</td>
@@ -657,13 +692,22 @@ export function AttendanceDetailsPage() {
                       ? <span className="text-emerald-700 font-bold">Yes</span>
                       : <span className="text-red-600 font-bold">No</span>}
                   </td>
-                  <td>{str(r, 'MakeUpInfo')}</td>
+                  <td>{pick(r, 'MakeUpDate') ? dmy(pick(r, 'MakeUpDate')) : ''}</td>
+                  <td>{str(r, 'MakeUpClassName')}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <Pager grid={grid} total={rows.length} />
         </div>
+      )}
+
+      {makeupFor && (
+        <MakeupModal
+          row={makeupFor}
+          onClose={() => setMakeupFor(null)}
+          onAssigned={() => { setMakeupFor(null); toast.success('Make-up saved.'); load(); }}
+        />
       )}
     </div>
   );

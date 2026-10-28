@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Loader2, AlertCircle, Save, Check, X, Users, RefreshCw, CheckCircle2, Download, CreditCard,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
@@ -59,6 +60,37 @@ export function TakeAttendancePage() {
   const [makeupFor, setMakeupFor] = useState<Row | null>(null);
   const [bulkStatus, setBulkStatus] = useState('');
   const [bulkLocation, setBulkLocation] = useState(0);
+  // Previous / next session of the same class (user, 2026-10-28: quick way to
+  // move between a class's sessions when taking attendance from the schedule).
+  const [nav, setNav] = useState<{ prev: Row | null; next: Row | null } | null>(null);
+
+  useEffect(() => {
+    setNav(null);
+    const sid0 = Number(sessionId) || 0;
+    if (!sid0) return;
+    let live = true;
+    const get = (r: Row, k: string) => { const kk = Object.keys(r).find((x) => x.toLowerCase() === k.toLowerCase()); return kk ? r[kk] : undefined; };
+    apiRequest<Row>(`/api/portal/edit/session/${sid0}`)
+      .then((s0) => {
+        const classId = Number(get(s0, 'SessionClassId') ?? 0);
+        if (!classId) return [] as Row[];
+        return apiRequest<Row[]>(`/api/portal/modules/sessions?classId=${classId}`);
+      })
+      .then((list) => {
+        if (!live) return;
+        const all = (Array.isArray(list) ? list : [])
+          .map((r) => ({ id: Number(get(r, 'SessionId') ?? 0), date: String(get(r, 'SessionDate') ?? ''), r }))
+          .filter((x) => x.id > 0)
+          .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+        const i = all.findIndex((x) => x.id === sid0);
+        if (i < 0) return;
+        setNav({ prev: i > 0 ? all[i - 1].r : null, next: i < all.length - 1 ? all[i + 1].r : null });
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [sessionId]);
+  const navDate = (r: Row) => { const k = Object.keys(r).find((x) => x.toLowerCase() === 'sessiondate'); return toDMY(k ? r[k] : '', ''); };
+  const navId = (r: Row) => { const k = Object.keys(r).find((x) => x.toLowerCase() === 'sessionid'); return Number(k ? r[k] : 0); };
 
   useEffect(() => {
     apiRequest<{ locations: Opt[] }>('/api/portal/modules/lookups')
@@ -230,6 +262,24 @@ export function TakeAttendancePage() {
         ].filter(Boolean).join('  ·  ')}
         slide={2}
       />
+
+      {nav && (nav.prev || nav.next) && (
+        <div className="flex items-center gap-2 mb-3 text-sm">
+          {nav.prev ? (
+            <Link to={`/sessions/${navId(nav.prev)}/attendance`} title="Previous session of this class"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:border-[#1e5c97]/40 hover:text-[#1e5c97]">
+              <ChevronLeft className="size-4" /> {navDate(nav.prev)}
+            </Link>
+          ) : <span className="text-xs text-slate-400 px-1">First session</span>}
+          <span className="text-xs font-bold uppercase tracking-wide text-slate-400">this class</span>
+          {nav.next ? (
+            <Link to={`/sessions/${navId(nav.next)}/attendance`} title="Next session of this class"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:border-[#1e5c97]/40 hover:text-[#1e5c97]">
+              {navDate(nav.next)} <ChevronRight className="size-4" />
+            </Link>
+          ) : <span className="text-xs text-slate-400 px-1">Latest session</span>}
+        </div>
+      )}
 
       {error && (
         <div className="flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
@@ -471,7 +521,10 @@ export function ClassLatestAttendanceRedirect() {
 // ClassesSessionsAttendanceMakeUp.aspx: student, "MakeUp For: class ON date",
 // MakeUp Date (the current make-up's date, else today), MakeUp Session
 // (sessions that day in the same semester, "Not Selected" clears it), Save.
-function MakeupModal({ row, onClose, onAssigned }: {
+// Also opened from the Attendance Details report, whose rows carry the same
+// keys (AttendanceId, AttendanceMakeUpSessionID, MakeUpDate, ClassName,
+// SessionDate, StudentFullName).
+export function MakeupModal({ row, onClose, onAssigned }: {
   row: Row; onClose: () => void; onAssigned: () => void;
 }) {
   const attendanceId = num(row, 'AttendanceId');
