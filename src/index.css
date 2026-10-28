@@ -37,19 +37,22 @@ h1, h2, h3 {
   from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: none; }
 }
-.page-in { animation: pageIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both; }
+/* backwards, not both: a filled transform animation keeps the element a
+   containing block for position:fixed, so dialogs inside a page were centred
+   on the whole page height instead of the screen. */
+.page-in { animation: pageIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
 @keyframes heroIn {
   from { opacity: 0; transform: scale(1.03); }
   to   { opacity: 1; transform: none; }
 }
-.hero-in { animation: heroIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.hero-in { animation: heroIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
 @keyframes riseIn {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: none; }
 }
-.rise-in { animation: riseIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rise-in { animation: riseIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 .rise-1 { animation-delay: 0.05s; }
 .rise-2 { animation-delay: 0.12s; }
 .rise-3 { animation-delay: 0.19s; }
