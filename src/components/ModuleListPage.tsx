@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search, Loader2, AlertCircle, ChevronLeft, ChevronRight,
   ArrowUpDown, ArrowUp, ArrowDown, Download, Plus, Pencil,
@@ -13,6 +13,8 @@ import { ColumnPicker, type PickerSection } from './ColumnPicker';
 import { useColumnPrefs, columnPrefKey } from '../lib/columnPrefs';
 
 import { useStickySort } from '../lib/stickySort';
+import { NEW_TAB } from '../lib/history';
+import { useRefreshOnFocus } from '../lib/refreshOnFocus';
 // Generic, config-driven list page: filter bar → portal API endpoint that
 // returns name-keyed proc rows → sortable, paginated grid with CSV export.
 
@@ -111,6 +113,10 @@ export interface ModuleConfig {
   editBase?: string;
   /** Show the Edit pencil as the FIRST column instead of the last. */
   editFirst?: boolean;
+  /** Row Edit, Add New and the config's own row links open in their own tab
+   *  (legacy popups) so the list stays exactly as the user left it; the list
+   *  refreshes, keeping its page, when its tab is focused again. */
+  newTab?: boolean;
   /** Filter params forwarded to the Add New form as query params (e.g.
    *  ['locationId'] so the new record defaults to the selected location). */
   newLinkParams?: string[];
@@ -395,11 +401,12 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
     return q.toString();
   }
 
-  function load(v = values) {
+  const loadedOnce = useRef(false);
+  function load(v = values, keepPage = false) {
     setLoading(true);
     setError('');
     apiRequest<Row[]>(`${config.endpoint}${config.endpoint.includes('?') ? '&' : '?'}${buildQuery(v)}`)
-      .then((data) => { setRows(data); setPage(0); })
+      .then((data) => { loadedOnce.current = true; setRows(data); if (!keepPage) setPage(0); })
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not load data.'))
       .finally(() => setLoading(false));
   }
@@ -407,6 +414,10 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   // On cascading pages the semester effect above owns the first load, so we
   // don't fire a throwaway request against a not-yet-resolved semester.
   useEffect(() => { if (!cascades) load(); }, [config.endpoint]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lists that open records in their own tab refresh when the user comes back
+  // to them (keeping the current page), so the edited row shows up.
+  useRefreshOnFocus(() => { if (config.newTab && loadedOnce.current && !loading) load(values, true); });
 
   // Mirror the filters into the URL as they change, so leaving the list (edit,
   // back button) and returning restores the same criteria instead of the
@@ -483,24 +494,29 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
     'rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#1e5c97]/40';
 
   // Row Edit pencil (first column; last on payroll lists or with editFirst: false).
-  const editCell = (r: Row) => (
-                      <td className="px-3 py-2.5 text-right">
-                        <button
-                          onClick={() => {
-                            // Legacy _AccessReadOnly: the Edit link refuses with an alert.
-                            if (config.canEditRows?.(values, userRole) === false) {
-                              window.alert('You do not have permission to do this action');
-                              return;
-                            }
-                            navigate(`${config.editBase}/${rowId(r, config.idKey)}`);
-                          }}
-                          title="Edit"
-                          className="text-[#1e5c97] hover:text-[#17497a]"
-                        >
-                          <Pencil className="size-4" />
-                        </button>
-                      </td>
-  );
+  const editCell = (r: Row) => {
+    // Legacy _AccessReadOnly: the Edit link refuses with an alert.
+    const refused = () => {
+      if (config.canEditRows?.(values, userRole) !== false) return false;
+      window.alert('You do not have permission to do this action');
+      return true;
+    };
+    const href = `${config.editBase}/${rowId(r, config.idKey)}`;
+    return (
+      <td className="px-3 py-2.5 text-right">
+        {config.newTab ? (
+          <Link {...NEW_TAB} to={href} title="Edit" className="inline-block text-[#1e5c97] hover:text-[#17497a]"
+            onClick={(e) => { e.stopPropagation(); if (refused()) e.preventDefault(); }}>
+            <Pencil className="size-4" />
+          </Link>
+        ) : (
+          <button onClick={() => { if (!refused()) navigate(href); }} title="Edit" className="text-[#1e5c97] hover:text-[#17497a]">
+            <Pencil className="size-4" />
+          </button>
+        )}
+      </td>
+    );
+  };
 
   return (
     <div className="p-6">
@@ -526,7 +542,10 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                     if (v === '' || v == null || v === false || v === 0) continue;
                     q.set(p, String(v));
                   }
-                  navigate(`${config.editBase}/new${q.toString() ? `?${q}` : ''}`);
+                  const url = `${config.editBase}/new${q.toString() ? `?${q}` : ''}`;
+                  // New tab (legacy popup): the router basename is Vite's base.
+                  if (config.newTab) window.open(`${import.meta.env.BASE_URL.replace(/\/$/, '')}${url}`, '_blank');
+                  else navigate(url);
                 }}
                 disabled={config.canAddNew?.(values, userRole) === false}
                 title={config.canAddNew?.(values, userRole) === false ? 'Not available for the selected locations' : undefined}

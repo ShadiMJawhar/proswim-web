@@ -11,6 +11,11 @@ export function canGoBack(): boolean {
   return typeof window !== 'undefined' && ((window.history.state?.idx ?? 0) > 0);
 }
 
+/** Spread on a <Link> that should open in its own tab (legacy popups): the
+ *  list or schedule underneath stays as the user left it, and rel=opener lets
+ *  the new tab close itself to come back (closeOrGo / SmartBack "Close"). */
+export const NEW_TAB = { target: '_blank', rel: 'opener' } as const;
+
 /** True when this tab was opened from another tab of the app (the schedules
  *  open every link with target=_blank rel=opener, like the legacy popups) and
  *  nothing else has been visited in it yet, so closing it is "going back". */

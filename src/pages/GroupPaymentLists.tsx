@@ -1,3 +1,4 @@
+import { NEW_TAB } from '../lib/history';
 // Group payment list pages, ported 1:1 from the legacy PaymentsList.aspx and
 // PaymentsRptDue.aspx (filters, defaults, columns, totals and their role
 // gating). Both use the multi-location + multi-semester pickers of the legacy
@@ -65,6 +66,7 @@ export function groupPaymentsConfig(): ModuleConfig {
     lookups: LOOKUPS,
     idKey: 'PaymentId',
     editBase: '/payments',
+    newTab: true,
     semesterPick: 'upcoming',
     // Legacy LblResultCounts: "[LBP Σ amount of LBP payments] [USD Σ paid = LBP Σ amount]"
     // for SiteMaster and payment/audit.
@@ -126,7 +128,7 @@ export function groupPaymentsConfig(): ModuleConfig {
           if (r === 'guest' || r === 'payment/audit' || u?.canSave === false) return '';
           const q = new URLSearchParams({ fromPaymentId: String(row.PaymentId ?? ''), locationId: String(row.LocationId ?? '') });
           return (
-            <Link
+            <Link {...NEW_TAB}
               to={`/payments/new?${q}`}
               onClick={(e) => e.stopPropagation()}
               className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
@@ -155,6 +157,7 @@ export function groupPaymentsDueConfig(): ModuleConfig {
     title: 'Due Payments',
     endpoint: '/api/portal/modules/payments-due',
     lookups: LOOKUPS,
+    newTab: true,
     semesterPick: 'upcoming',
     // Legacy LblResultCounts: "Records N", SiteMaster + ShowAmount adds the
     // Total / Paid / Due per semester currency, then everyone gets the
@@ -209,7 +212,7 @@ export function groupPaymentsDueConfig(): ModuleConfig {
         return (
           <Link
             to={`/attendance-details?search=${encodeURIComponent(String(row.StudentFullName ?? ''))}`}
-            target="_blank"
+            {...NEW_TAB}
             onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center text-xs font-bold text-[#1e5c97] hover:underline whitespace-nowrap"
           >
@@ -228,7 +231,7 @@ export function groupPaymentsDueConfig(): ModuleConfig {
         locationId: String(row.LocationId ?? ''),
       });
       return (
-        <Link
+        <Link {...NEW_TAB}
           to={`/payments/new?${q}`}
           onClick={(e) => e.stopPropagation()}
           className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"

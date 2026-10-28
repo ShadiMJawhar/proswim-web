@@ -1,3 +1,4 @@
+import { NEW_TAB } from '../lib/history';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ModuleListPage, type ModuleConfig, type Row, type ColumnDef, type FilterOption } from '../components/ModuleListPage';
@@ -96,6 +97,7 @@ const registrations: ModuleConfig = {
   lookups: LOOKUPS,
   idKey: 'RegistrationId',   // P_Registration_Select returns tbl_Registration.* casing
   editBase: '/registrations',
+  newTab: true,
   newLinkParams: ['locationIds'],
   // Locations → semesters (one location: its first upcoming; several: all their
   // upcoming), coaches of the locations, classes of locations + semesters.
@@ -199,7 +201,7 @@ const registrations: ModuleConfig = {
     if (col.key !== '_attendance') return undefined;
     const q = new URLSearchParams({ locationId: String(row.LocationId ?? ''), search: String(row.StudentFullName ?? '') });
     return (
-      <Link
+      <Link {...NEW_TAB}
         to={`/attendance-details?${q}`}
         onClick={(e) => e.stopPropagation()}
         className="inline-flex items-center text-xs font-bold text-[#1e5c97] hover:underline whitespace-nowrap no-underline"
@@ -296,6 +298,7 @@ function privatePackagesConfig(): ModuleConfig {
     lookups: LOOKUPS,
     idKey: 'PackageId',
     editBase: '/privates',
+    newTab: true,
     // Edit + Pay first, so they're reachable without scrolling (user, 2026-10-24).
     editFirst: true,
     // Legacy filter order and AutoPostBack: every filter applies on change; the
@@ -391,7 +394,7 @@ function privatePackagesConfig(): ModuleConfig {
         case 'PackageDesc':
           if ((u?.userType || '').toLowerCase() === 'guest' || !row.PackageId) return undefined;
           return (
-            <Link to={`/privates/${row.PackageId}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-[#1e5c97] hover:underline">
+            <Link {...NEW_TAB} to={`/privates/${row.PackageId}`} onClick={(e) => e.stopPropagation()} className="font-semibold text-[#1e5c97] hover:underline">
               {String(row.PackageDesc ?? '') || `#${row.PackageId}`}
             </Link>
           );
@@ -433,7 +436,7 @@ function privatePackagesConfig(): ModuleConfig {
         case '_pay':
           if (!canAct) return '';
           return (
-            <Link
+            <Link {...NEW_TAB}
               to={`/pr-payments/new?packageId=${row.PackageId ?? ''}`}
               onClick={(e) => e.stopPropagation()}
               className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
@@ -471,6 +474,7 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
     lookups: LOOKUPS,
     idKey: 'PrivatePaymentID',
     editBase: '/pr-payments',
+    newTab: true,
     summary: { roles: SITEMASTER, text: (rows) => legacyCurrencyTotal(rows, 'PrivatePaymentPaidAmount', 'PrivatePaymentPaidCurrency') },
     // Legacy filter bar order: Location, Class Types, Currency, search, From, To.
     filters: [
@@ -521,7 +525,7 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
         case 'IDShow':
           if (ut === 'guest' || ut === 'payment/audit' || !row.PrivatePaymentID) return undefined;
           return (
-            <Link
+            <Link {...NEW_TAB}
               to={`/pr-payments/${row.PrivatePaymentID}`}
               onClick={(e) => e.stopPropagation()}
               className="font-semibold text-[#1e5c97] hover:underline"
@@ -534,7 +538,7 @@ function privatePaymentsConfig(mode: string, title: string): ModuleConfig {
         case '_pay':
           if (ut === 'guest' || ut === 'payment/audit' || u?.canSave === false) return '';
           return (
-            <Link
+            <Link {...NEW_TAB}
               to={`/pr-payments/new?packageId=${row.PrivatePackageId ?? ''}`}
               onClick={(e) => e.stopPropagation()}
               className="inline-flex items-center text-xs font-bold text-emerald-700 hover:underline whitespace-nowrap"
