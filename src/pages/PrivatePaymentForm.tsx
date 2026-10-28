@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Save, Printer, Mail, Truck } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
-import { canGoBack } from '../lib/history';
+import { closeOrGo } from '../lib/history';
 import { DateInput } from '../components/DateInput';
 import { toast } from '../components/Toast';
 import { PageHero } from '../components/PageHero';
@@ -232,7 +232,7 @@ export function PrivatePaymentForm() {
     return paymentId;
   }
 
-  function goBack() { if (canGoBack()) navigate(-1); else navigate(isExtra ? '/ex-payments' : '/pr-payments'); }
+  function goBack() { closeOrGo(navigate, isExtra ? '/ex-payments' : '/pr-payments'); }
 
   async function onSave() {
     setBusy('save'); setError('');

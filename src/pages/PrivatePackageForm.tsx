@@ -7,7 +7,7 @@ import { toast } from '../components/Toast';
 import { PageHero } from '../components/PageHero';
 import { SmartBack } from '../components/SmartBack';
 import { fmtDate } from '../lib/dates';
-import { canGoBack } from '../lib/history';
+import { closeOrGo } from '../lib/history';
 
 // Private package form (legacy PrivatePackagesIndividual.aspx): package
 // fields + parent/child links, and on an existing package the sessions
@@ -440,7 +440,7 @@ export function PrivatePackageForm() {
   // ── Save ─────────────────────────────────────────────────────────────────
   // close = "Save & Close": after saving, go back to the list the user came
   // from (its filters and sort are kept, and it reloads), or to /privates.
-  const closeForm = () => { if (canGoBack()) navigate(-1); else navigate('/privates'); };
+  const closeForm = () => closeOrGo(navigate, '/privates');
   async function save(close = false) {
     // Legacy page validators (Required / dd/mm/yyyy / "Num" = digits only),
     // then the BtnSaveChanges_Click checks in the same order.

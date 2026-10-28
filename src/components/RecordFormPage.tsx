@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Save, Search } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
-import { canGoBack } from '../lib/history';
+import { closeOrGo } from '../lib/history';
 import { DateInput } from './DateInput';
 import { PageHero } from './PageHero';
 import { SchoolPicker } from './SchoolPicker';
@@ -287,7 +287,7 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
       if (isNew && config.onCreated) { navigate(config.onCreated(res, payload)); return; }
       // Back to the list as the user left it (filters live in its URL), not a
       // fresh default-filtered copy; bare list only when opened directly.
-      if (canGoBack()) navigate(-1); else navigate(config.listPath);
+      closeOrGo(navigate, config.listPath);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Save failed.';
       setError(msg);

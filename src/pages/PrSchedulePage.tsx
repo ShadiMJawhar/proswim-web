@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState, useUrlPatch } from '../lib/urlState';
+import { useRefreshOnFocus } from '../lib/refreshOnFocus';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
@@ -121,6 +122,11 @@ function counterLink(criteria: string, locationId: number): string {
 const DAYS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Every link opens in its own tab, like the legacy popups, so the schedule
+// stays open as the user left it; rel=opener lets that tab close itself
+// ("Close" in SmartBack / Save & Close) to come back here.
+const NEW_TAB = { target: '_blank', rel: 'opener' } as const;
+
 export function PrSchedulePage() {
   const user = getStoredUser();
   const userType = (user?.userType || '').toLowerCase();
@@ -208,6 +214,7 @@ export function PrSchedulePage() {
     }
     load(dateFrom, dateTo);
   }, [locationId, coachId, day, onlyActive, freeTimes, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  useRefreshOnFocus(() => { if (dateFrom && dateTo) load(dateFrom, dateTo); });
 
   function shiftWeek(offset: number) {
     const from = offset === 0 ? mondayOfWeek(new Date()) : new Date(new Date(dateFrom).getTime() + offset * 7 * 86400000);
@@ -305,7 +312,7 @@ export function PrSchedulePage() {
             {COUNT_LABELS.map(([criteria, label]) => {
               const cnt = n((data?.countsHeader ?? []).find((c) => s(c.Criteria) === criteria)?.Cnt);
               return cnt > 0 && (
-                <Link
+                <Link {...NEW_TAB}
                   key={criteria}
                   to={counterLink(criteria, locationId)}
                   className="text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-2 py-1 hover:bg-red-100"
@@ -315,7 +322,7 @@ export function PrSchedulePage() {
               );
             })}
             {canAddNew ? (
-              <Link
+              <Link {...NEW_TAB}
                 to={`/privates/new?locationId=${locationId}`}
                 className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5"
               >
@@ -540,7 +547,7 @@ function FragmentRows({
               className={`p-1.5 text-center font-semibold ${isToday ? 'bg-[#555555] text-white border-2 border-black' : 'bg-[#aabacf]'}`}
             >
               {readOnly ? label : (
-                <Link
+                <Link {...NEW_TAB}
                   to={`/pr-attendance?date=${iso}&locationId=${locationId}`}
                   title="Open daily attendance for this day"
                   className={`hover:underline ${isToday ? 'text-white' : 'text-slate-800'}`}
@@ -588,7 +595,7 @@ function FragmentRows({
                 )}
                 {real.map((r, i) => (
                   <div key={i} className="rounded p-1 mb-0.5" style={{ ...boxStyle(r), ...boxBorder(r) }}>
-                    <Link
+                    <Link {...NEW_TAB}
                       to={`/students/${n(r.Std1ID)}`}
                       title="Open student page"
                       className="font-bold text-[12px] uppercase hover:underline"
@@ -608,7 +615,7 @@ function FragmentRows({
                       {readOnly ? (
                         <span>Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}</span>
                       ) : (
-                        <Link to={`/privates/${n(r.PackageId)}`} title="Open package" className="hover:underline">
+                        <Link {...NEW_TAB} to={`/privates/${n(r.PackageId)}`} title="Open package" className="hover:underline">
                           Att {n(r.CountAttended)}/{n(r.PackageNumberOfSessions)}
                         </Link>
                       )}
@@ -618,7 +625,7 @@ function FragmentRows({
                           Due {n(r.DuePercent)}%
                         </span>
                       ) : (
-                        <Link
+                        <Link {...NEW_TAB}
                           to={`/pr-payments/new?packageId=${n(r.PackageId)}`}
                           title="Add payment"
                           className={`hover:underline ${n(r.DuePercent) > 0 ? 'text-red-600 font-semibold' : ''}`}
@@ -642,7 +649,7 @@ function FragmentRows({
                       )}
                       {/* Legacy follow-up icon opens the package, also on read-only views. */}
                       {s(r.PackageFollowUp) && (
-                        <Link to={`/privates/${n(r.PackageId)}`} title="Open package"
+                        <Link {...NEW_TAB} to={`/privates/${n(r.PackageId)}`} title="Open package"
                           className="text-[9px] font-semibold bg-white/60 rounded px-1 hover:underline">
                           {s(r.PackageFollowUp)}
                         </Link>
@@ -653,10 +660,10 @@ function FragmentRows({
                     <div className="flex items-center gap-0.5 mt-1 -ml-1">
                       {!readOnly && (
                         <>
-                          <Link to={`/privates/${n(r.PackageId)}`} title="Open package" className="p-1 rounded hover:bg-white/80">
+                          <Link {...NEW_TAB} to={`/privates/${n(r.PackageId)}`} title="Open package" className="p-1 rounded hover:bg-white/80">
                             <Package className="size-5 text-slate-600 hover:text-[#1e5c97]" />
                           </Link>
-                          <Link to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment" className="p-1 rounded hover:bg-white/80">
+                          <Link {...NEW_TAB} to={`/pr-payments/new?packageId=${n(r.PackageId)}`} title="Add payment" className="p-1 rounded hover:bg-white/80">
                             <CreditCard className={`size-5 ${n(r.DuePercent) > 0 ? 'text-red-600' : 'text-slate-600'} hover:text-[#1e5c97]`} />
                           </Link>
                         </>

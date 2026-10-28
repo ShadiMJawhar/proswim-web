@@ -13,7 +13,7 @@ import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
 import { SmartBack } from '../components/SmartBack';
 import { toast } from '../components/Toast';
-import { canGoBack } from '../lib/history';
+import { closeOrGo } from '../lib/history';
 import { toDate } from '../lib/dates';
 
 import { useStickySort } from '../lib/stickySort';
@@ -247,7 +247,7 @@ export function ExtraClassForm() {
       else await apiRequest(`/api/portal/edit/extra-class/${classId}`, { method: 'PUT', body: JSON.stringify(payload) });
       toast.success(isNew ? 'Extra class created.' : 'Extra class saved.');
       // Legacy closes the pop-up and refreshes the list that opened it.
-      if (canGoBack()) navigate(-1); else navigate('/extra-classes');
+      closeOrGo(navigate, '/extra-classes');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Save failed.';
       setError(msg); toast.error(msg);

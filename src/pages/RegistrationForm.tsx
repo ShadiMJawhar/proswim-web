@@ -14,7 +14,7 @@ import {
   CreditCard, Trash2, User,
 } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
-import { canGoBack } from '../lib/history';
+import { closeOrGo } from '../lib/history';
 import { fmtDate } from '../lib/dates';
 import { DateInput } from '../components/DateInput';
 import { toast } from '../components/Toast';
@@ -398,8 +398,7 @@ export function RegistrationForm() {
       }
       toast.success('Registration saved.');
       if (andPay) navigate(payLink());
-      else if (canGoBack()) navigate(-1);
-      else navigate('/registrations');
+      else closeOrGo(navigate, '/registrations');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Save failed.';
       setError(msg); toast.error(msg);
@@ -412,7 +411,7 @@ export function RegistrationForm() {
     try {
       await apiRequest(`/api/portal/edit/registration/${id}`, { method: 'DELETE' });
       toast.success('Registration Deleted Successfully');
-      if (canGoBack()) navigate(-1); else navigate('/registrations');
+      closeOrGo(navigate, '/registrations');
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Delete failed.';
       setError(msg); toast.error(msg);

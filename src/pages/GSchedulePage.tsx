@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Loader2, AlertCircle, Search, AlertTriangle, OctagonX, Phone, Cake, StickyNote, MessageSquarePlus, Plus } from 'lucide-react';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
+import { useRefreshOnFocus } from '../lib/refreshOnFocus';
 import { fmtDate as toDMY } from '../lib/dates';
 import { coachStats, scheduleTotals } from '../lib/gscheduleStats';
 import { PageHero } from '../components/PageHero';
@@ -56,6 +57,11 @@ function isBirthdayNear(dob: unknown): boolean {
 
 // Legacy coach-name cleanup in the cells ("A-Name" → "Name").
 const coachShort = (c: string) => c.replace(/[A-F]-/g, '');
+
+// Every link opens in its own tab, like the legacy popups, so the schedule
+// stays open as the user left it; rel=opener lets that tab close itself
+// ("Close" in SmartBack / Save & Close) to come back here.
+const NEW_TAB = { target: '_blank', rel: 'opener' } as const;
 
 export function GSchedulePage() {
   const user = getStoredUser();
@@ -151,6 +157,8 @@ export function GSchedulePage() {
   }, []);
 
   useEffect(() => { load(semesterId, search); }, [semesterId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Records are edited in their own tabs; refresh when the user comes back.
+  useRefreshOnFocus(() => load(semesterId, search));
 
   // ── derived matrix helpers ────────────────────────────────────────────────
   const coachNames = (data?.coaches ?? []).map((c) => s(c.CoachName)).filter(Boolean);
@@ -221,7 +229,7 @@ export function GSchedulePage() {
             )}
             {/* Legacy BtnAddNew (disabled when read-only) */}
             {canAddNew && (
-              <Link to="/registrations/new" className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5">
+              <Link {...NEW_TAB} to="/registrations/new" className="btn-grad flex items-center gap-1.5 rounded-lg text-xs font-semibold px-3 py-1.5">
                 <Plus className="size-3.5" /> Add New
               </Link>
             )}
@@ -340,14 +348,14 @@ export function GSchedulePage() {
                               <span className="font-bold underline text-[11px] text-slate-700">{coachShort(coach)}</span>
                               {/* [Level] → the class record (legacy OpenWindowForClass) */}
                               {level && (canAct && classId
-                                ? <Link to={classLink(classId)} className="text-[#dd22aa] font-bold text-[12px] hover:underline">[{level}]</Link>
+                                ? <Link {...NEW_TAB} to={classLink(classId)} className="text-[#dd22aa] font-bold text-[12px] hover:underline">[{level}]</Link>
                                 : <span className="text-[#1e5c97] font-bold text-[12px]">[{level}]</span>)}
                               {/* [count] → take the attendance of the class's latest session, like
                                   legacy OpenWindowForAttendance (ClassesSessionsAttendanceList.aspx?ClassID=);
                                   an empty cell opens the class instead. */}
                               {canAct && classId
                                 ? (
-                                  <Link
+                                  <Link {...NEW_TAB}
                                     to={students.length > 0 ? `/classes/${classId}/attendance` : classLink(classId)}
                                     className="font-bold text-red-600 hover:underline"
                                     title={students.length > 0 ? 'Take attendance (latest session)' : 'Open class'}
@@ -391,7 +399,7 @@ export function GSchedulePage() {
                                     />
                                     {/* Name → the registration record */}
                                     {canAct ? (
-                                      <Link
+                                      <Link {...NEW_TAB}
                                         to={`/registrations/${n(r.RegistrationId)}`}
                                         className="truncate max-w-[120px] hover:underline hover:text-[#1e5c97]"
                                         title="Open registration"
@@ -403,7 +411,7 @@ export function GSchedulePage() {
                                     )}
                                     {/* "D: %x" when due, "$" when paid → in-app payment form */}
                                     {canAct ? (
-                                      <Link
+                                      <Link {...NEW_TAB}
                                         to={payLink(r)}
                                         title={`Add payment${r.DueAmount != null ? `, due ${s(r.DueAmount)}` : ''}`}
                                         className={`font-semibold hover:underline ${due > 0 ? 'text-red-600' : 'text-emerald-700'}`}
