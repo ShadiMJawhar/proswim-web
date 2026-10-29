@@ -12,6 +12,7 @@ import {
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState, useUrlPatch } from '../lib/urlState';
 import { useRefreshOnFocus } from '../lib/refreshOnFocus';
+import { useZoomPref, ZoomControl } from '../components/ZoomControl';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
@@ -153,6 +154,7 @@ export function PrSchedulePage() {
   const [dateTo, setDateTo] = useUrlState('dateTo', fmtISO(new Date(monday.getTime() + 5 * 86400000)));
   const [onlyActive, setOnlyActive] = useUrlState('onlyActive', true);
   const [freeTimes, setFreeTimes] = useUrlState('freeTimes', false);
+  const zoomPref = useZoomPref('pr-schedule');
   const patchUrl = useUrlPatch();
   const [data, setData] = useState<PrivateData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -402,6 +404,8 @@ export function PrSchedulePage() {
         <button type="submit" className="rounded-lg bg-[#1e5c97] text-white text-xs font-semibold px-4 py-1.5 hover:bg-[#17497a]">
           Search
         </button>
+        {/* Text/icon size, saved per user (user, 2026-10-29: titles and icons too small). */}
+        <div className="ml-auto"><ZoomControl pref={zoomPref} /></div>
       </form>
 
       {error && (
@@ -426,7 +430,7 @@ export function PrSchedulePage() {
       ) : data && coachList.length === 0 ? (
         <div className="text-center py-16 text-slate-400 text-sm">No data for this week.</div>
       ) : data && (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm" style={{ zoom: zoomPref.zoom }}>
           <table className="w-full text-xs border-collapse" style={{ minWidth: `${120 + days.length * 190}px` }}>
             <tbody>
               {coachList.map((coach) => {

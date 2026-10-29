@@ -4,6 +4,7 @@ import { Loader2, AlertCircle, Search, AlertTriangle, OctagonX, Phone, Cake, Sti
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
 import { useRefreshOnFocus } from '../lib/refreshOnFocus';
+import { useZoomPref, ZoomControl } from '../components/ZoomControl';
 import { fmtDate as toDMY } from '../lib/dates';
 import { coachStats, scheduleTotals } from '../lib/gscheduleStats';
 import { PageHero } from '../components/PageHero';
@@ -76,6 +77,7 @@ export function GSchedulePage() {
   const [semesters, setSemesters] = useState<Row[]>([]);
   const [semesterId, setSemesterId] = useUrlState('semesterId', 0);
   const [search, setSearch] = useUrlState('search', '');
+  const zoomPref = useZoomPref('schedule');
   const [data, setData] = useState<GroupData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -272,6 +274,8 @@ export function GSchedulePage() {
         <button type="submit" className="rounded-lg bg-[#1e5c97] text-white text-xs font-semibold px-4 py-1.5 hover:bg-[#17497a]">
           Search
         </button>
+        {/* Text/icon size, saved per user (user, 2026-10-29: titles and icons too small). */}
+        <div className="ml-auto"><ZoomControl pref={zoomPref} /></div>
       </form>
 
       {error && (
@@ -295,7 +299,7 @@ export function GSchedulePage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm" style={{ zoom: zoomPref.zoom }}>
           <table className="w-full text-xs border-collapse" style={{ minWidth: `${110 + coachNames.length * 200}px` }}>
             <thead>
               {/* Coach band, same chrome as the Private Schedule coach rows */}
