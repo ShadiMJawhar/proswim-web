@@ -122,3 +122,28 @@ h1, h2, h3 {
     cursor: not-allowed;
   }
 }
+
+/* ── Text size control (components/ZoomControl) ───────────────────────────
+   `.text-zoom` + `--zs` scale the FONTS and ICONS of a grid only; widths,
+   paddings and the table size stay as they are (plain CSS zoom also widened
+   the columns, so wide schedules started to scroll — user, 2026-10-29).
+   Tailwind's named sizes read theme variables, so redefining them here is
+   enough; arbitrary px sizes and the icon sizes used in the schedules are
+   listed explicitly (unlayered rules win over the utility layer). */
+.text-zoom {
+  --zs: 1;
+  --text-xs: calc(0.75rem * var(--zs));
+  --text-sm: calc(0.875rem * var(--zs));
+  --text-base: calc(1rem * var(--zs));
+}
+.text-zoom .text-\[9px\]  { font-size: calc(9px * var(--zs)); }
+.text-zoom .text-\[10px\] { font-size: calc(10px * var(--zs)); }
+.text-zoom .text-\[11px\] { font-size: calc(11px * var(--zs)); }
+.text-zoom .text-\[12px\] { font-size: calc(12px * var(--zs)); }
+.text-zoom .text-\[13px\] { font-size: calc(13px * var(--zs)); }
+.text-zoom .size-3    { width: calc(0.75rem * var(--zs));  height: calc(0.75rem * var(--zs)); }
+.text-zoom .size-3\.5 { width: calc(0.875rem * var(--zs)); height: calc(0.875rem * var(--zs)); }
+.text-zoom .size-4    { width: calc(1rem * var(--zs));     height: calc(1rem * var(--zs)); }
+.text-zoom .size-5    { width: calc(1.25rem * var(--zs));  height: calc(1.25rem * var(--zs)); }
+.text-zoom .w-2.h-2         { width: calc(0.5rem * var(--zs));   height: calc(0.5rem * var(--zs)); }
+.text-zoom .w-2\.5.h-2\.5   { width: calc(0.625rem * var(--zs)); height: calc(0.625rem * var(--zs)); }

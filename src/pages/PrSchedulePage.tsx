@@ -430,7 +430,7 @@ export function PrSchedulePage() {
       ) : data && coachList.length === 0 ? (
         <div className="text-center py-16 text-slate-400 text-sm">No data for this week.</div>
       ) : data && (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm" style={{ zoom: zoomPref.zoom }}>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm text-zoom" style={zoomPref.style}>
           <table className="w-full text-xs border-collapse" style={{ minWidth: `${120 + days.length * 190}px` }}>
             <tbody>
               {coachList.map((coach) => {

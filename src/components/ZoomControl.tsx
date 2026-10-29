@@ -1,10 +1,11 @@
 // Per-user text/icon size for the schedules ("A−  125%  A+"). The chosen
-// zoom is saved to the user's account (tbl_Portal_UserPrefs via
+// size is saved to the user's account (tbl_Portal_UserPrefs via
 // /api/portal/prefs/zoom.<page>) and mirrored in localStorage so the page
-// opens at the right size before the server answers. Applied with CSS `zoom`
-// on the grid wrapper, so text, icons and spacing all grow together.
+// opens at the right size before the server answers. Applied as `--zs` on a
+// `.text-zoom` wrapper (see index.css): fonts and icons scale, widths don't,
+// so a wide schedule keeps its columns and never starts to scroll sideways.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { apiRequest } from '../api/portalApi';
 
@@ -51,6 +52,8 @@ export function useZoomPref(page: string) {
   const i = STEPS.indexOf(zoom);
   return {
     zoom,
+    /** Put on the grid wrapper together with className "text-zoom". */
+    style: { '--zs': zoom } as CSSProperties,
     set,
     canInc: i < STEPS.length - 1,
     canDec: i > 0,

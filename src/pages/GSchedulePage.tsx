@@ -299,7 +299,7 @@ export function GSchedulePage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm" style={{ zoom: zoomPref.zoom }}>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm text-zoom" style={zoomPref.style}>
           <table className="w-full text-xs border-collapse" style={{ minWidth: `${110 + coachNames.length * 200}px` }}>
             <thead>
               {/* Coach band, same chrome as the Private Schedule coach rows */}
