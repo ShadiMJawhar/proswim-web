@@ -108,6 +108,9 @@ export function ExtraClassForm() {
   const isNew = !id || id === 'new';
   const classId = isNew ? 0 : Number(id);
   const lockLocation = userType === 'user';
+  // "Change client" (user, 2026-10-30): SiteMaster / SuperUser only; the
+  // legacy update never writes the student, so it goes through its own call.
+  const canChangeClient = !isNew && canSave && (userType === 'sitemaster' || userType === 'superuser');
   // Legacy query string (Renew Pack link): LocationID / StudentID / ClassType.
   const qp = (k: string) => params.get(k) ?? params.get(k.charAt(0).toUpperCase() + k.slice(1)) ?? '';
 
@@ -120,6 +123,7 @@ export function ExtraClassForm() {
   const [type, setType] = useState(() => (TYPES.includes(qp('classType')) ? qp('classType') : 'AquaBaby'));
   const [studentId, setStudentId] = useState(() => n(qp('studentId')));
   const [studentLabel, setStudentLabel] = useState('');
+  const [changingClient, setChangingClient] = useState(false);
   const [startDate, setStartDate] = useState(iso(new Date()));
   const [sessions, setSessions] = useState('1');
   const [cost, setCost] = useState('0');
@@ -214,6 +218,20 @@ export function ExtraClassForm() {
         .catch(() => setResults([]));
     }, 250);
   }, [q, picking, locationId]);
+
+  // ── Change client (edit only) ────────────────────────────────────────────
+  async function changeClient(r: Picker) {
+    if (r.id === studentId) { setChangingClient(false); setPicking(false); return; }
+    if (!window.confirm(`Move this extra class from ${studentLabel || 'the current student'} to ${r.label}?\nSessions and payments stay with the class.`)) return;
+    try {
+      await apiRequest(`/api/portal/edit/extra-class/${classId}/change-student`, { method: 'POST', body: JSON.stringify({ studentId: r.id }) });
+      setStudentId(r.id); setStudentLabel(r.label);
+      setChangingClient(false); setPicking(false);
+      toast.success('Client changed.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not change the client.');
+    }
+  }
 
   // ── Save Changes ─────────────────────────────────────────────────────────
   async function save() {
@@ -350,7 +368,9 @@ export function ExtraClassForm() {
 
   const statusOptions = status && !STATUSES.some((o) => o.value === status) ? [...STATUSES, { value: status, label: status }] : STATUSES;
   const typeOptions = type && !TYPES.includes(type) ? [...TYPES, type] : TYPES;
-  const fixedOnEdit = 'Not changed by an edit (the legacy update keeps the value set at creation)';
+  const fixedOnEdit = canChangeClient
+    ? 'Use "Change client" to move this extra class to another student'
+    : 'Only a SiteMaster or SuperUser can change the client of an extra class';
 
   return (
     <div className="p-6 md:p-8 max-w-5xl">
@@ -401,20 +421,37 @@ export function ExtraClassForm() {
 
           <div className="relative">
             <label className={labelCls}>Student {studentId ? <span className="font-normal text-slate-400">· #{studentId}</span> : null}</label>
-            {!isNew ? (
-              <input value={studentLabel} disabled title={fixedOnEdit} className={inputCls} />
+            {!isNew && !changingClient ? (
+              <div className="flex items-center gap-2">
+                <input value={studentLabel} disabled title={fixedOnEdit} className={inputCls} />
+                {canChangeClient && (
+                  <button type="button" onClick={() => { setChangingClient(true); setPicking(true); setQ(''); }}
+                    className="shrink-0 whitespace-nowrap rounded-lg border border-[#1e5c97]/30 px-3 py-2 text-xs font-semibold text-[#1e5c97] hover:bg-[#e8f0f8]">
+                    Change client
+                  </button>
+                )}
+              </div>
             ) : (
               <>
-                <div className="relative">
-                  <Search className="size-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    value={picking ? q : studentLabel}
-                    onFocus={() => { setPicking(true); setQ(''); }}
-                    onBlur={() => setTimeout(() => setPicking(false), 200)}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Not Selected (type to search this location's students)"
-                    className={`${inputCls} pl-8`}
-                  />
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="size-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      autoFocus={changingClient}
+                      value={picking ? q : studentLabel}
+                      onFocus={() => { setPicking(true); setQ(''); }}
+                      onBlur={() => setTimeout(() => setPicking(false), 200)}
+                      onChange={(e) => setQ(e.target.value)}
+                      placeholder={changingClient ? `Type to search this location's students (now: ${studentLabel})` : "Not Selected (type to search this location's students)"}
+                      className={`${inputCls} pl-8`}
+                    />
+                  </div>
+                  {changingClient && (
+                    <button type="button" onClick={() => { setChangingClient(false); setPicking(false); }}
+                      className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                      Cancel
+                    </button>
+                  )}
                 </div>
                 {picking && results.length > 0 && (
                   <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
@@ -423,7 +460,7 @@ export function ExtraClassForm() {
                         key={r.id}
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { setStudentId(r.id); setStudentLabel(r.label); setPicking(false); }}
+                        onClick={() => { if (changingClient) void changeClient(r); else { setStudentId(r.id); setStudentLabel(r.label); setPicking(false); } }}
                         className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
                       >
                         {r.label}
