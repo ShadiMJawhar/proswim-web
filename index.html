@@ -8,6 +8,21 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // Self-heal after an upload: a cached copy of this page can point at a
+      // build whose hashed script no longer exists, which left a deep link
+      // opened in a new tab blank. If the app script fails to load, reload
+      // once (per script URL) to fetch the current page.
+      window.addEventListener('error', function (e) {
+        var t = e.target;
+        if (!t || t.tagName !== 'SCRIPT' || !t.src) return;
+        try {
+          if (sessionStorage.getItem('pswm-reloaded-for') === t.src) return;
+          sessionStorage.setItem('pswm-reloaded-for', t.src);
+        } catch (x) { /* storage blocked: still try once */ }
+        location.reload();
+      }, true);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
