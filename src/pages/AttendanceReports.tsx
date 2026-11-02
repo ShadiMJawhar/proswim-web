@@ -24,6 +24,7 @@ import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
 import { toast } from '../components/Toast';
 import { MakeupModal } from './TakeAttendancePage';
+import { PhoneText, PhoneModeToggle } from '../components/PhoneLink';
 
 import { useStickySort, routeGridKey } from '../lib/stickySort';
 type Row = Record<string, unknown>;
@@ -321,6 +322,7 @@ export function AttendanceSummaryPage() {
           <label className="flex items-center gap-1.5 text-sm text-slate-600 select-none">
             <input type="checkbox" checked={showStopped} onChange={(e) => setShowStopped(e.target.checked)} className="accent-[#1e5c97]" /> Stopped
           </label>
+          <PhoneModeToggle className="text-sm" />
           <button onClick={load} disabled={loading}
             className="flex items-center gap-1.5 rounded-lg bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-semibold px-5 py-1.5 disabled:opacity-50">
             {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />} Search
@@ -374,7 +376,7 @@ export function AttendanceSummaryPage() {
               {grid.pageRows.map((r, i) => (
                 <tr key={i} className={stoppedCls(r)}>
                   <td className="font-semibold">{str(r, 'StudentFullName')}</td>
-                  <td>{str(r, 'StudentPhoneNumber1')}</td>
+                  <td><PhoneText value={str(r, 'StudentPhoneNumber1')} /></td>
                   <td>{str(r, 'CoachFullName')}</td>
                   <td className="text-center">{num(r, 'Total')}</td>
                   <td className="text-center text-emerald-700 font-semibold">{num(r, 'Attended')}</td>
@@ -596,6 +598,7 @@ export function AttendanceDetailsPage() {
           <DateInput value={dateTo} onChange={(e) => { setDateTo(e.target.value); setDay(''); }} className={inputCls} />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && load()} placeholder="Search student…" className={`${inputCls} w-44`} />
+          <PhoneModeToggle className="text-sm" />
           <button onClick={() => load()} disabled={loading}
             className="flex items-center gap-1.5 rounded-lg bg-[#1e5c97] hover:bg-[#17497a] text-white text-sm font-semibold px-5 py-1.5 disabled:opacity-50">
             {loading ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />} Search
@@ -682,7 +685,7 @@ export function AttendanceDetailsPage() {
                     </div>
                   </td>
                   <td className="font-semibold">{str(r, 'StudentFullName')}</td>
-                  <td>{str(r, 'StudentPhoneNumber1')}</td>
+                  <td><PhoneText value={str(r, 'StudentPhoneNumber1')} /></td>
                   <td>{dmy(r.SessionDate)}</td>
                   <td>{str(r, 'ClassName')}</td>
                   <td>{str(r, 'AttendanceStatus')}</td>

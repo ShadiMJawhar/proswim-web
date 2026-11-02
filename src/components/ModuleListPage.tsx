@@ -15,6 +15,7 @@ import { useColumnPrefs, columnPrefKey } from '../lib/columnPrefs';
 import { useStickySort } from '../lib/stickySort';
 import { NEW_TAB } from '../lib/history';
 import { useRefreshOnFocus } from '../lib/refreshOnFocus';
+import { PhoneText, PhoneModeToggle } from './PhoneLink';
 // Generic, config-driven list page: filter bar → portal API endpoint that
 // returns name-keyed proc rows → sortable, paginated grid with CSV export.
 
@@ -452,6 +453,8 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
   // columns off. Group columns only exist for the roles their group allows.
   const groupAllowed = (c: ColumnDef) => !c.group || groups.some((g) => g.key === c.group);
   const pickable = (c: ColumnDef) => !!c.label && !c.key.startsWith('_');
+  // Phone columns (a key or label with "phone") render as WhatsApp / copy links.
+  const isPhoneCol = (c: ColumnDef) => /phone/i.test(c.key) || /^phone\b/i.test(c.label ?? '');
   const defaultShown = (c: ColumnDef) => !c.extra && !c.group;
   const visibleCols = config.columns.filter((c) => groupAllowed(c) && (!pickable(c) || colPrefs.isShown(c.key, defaultShown(c)))
     && !c.hiddenWhen?.(values, userRole));
@@ -554,6 +557,7 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                 <Plus className="size-3.5" /> Add New
               </button>
             )}
+            {cols.some(isPhoneCol) && <PhoneModeToggle />}
             <ColumnPicker
               sections={pickerSections}
               onToggle={colPrefs.set}
@@ -702,7 +706,9 @@ export function ModuleListPage({ config }: { config: ModuleConfig }) {
                       const custom = config.renderCell?.(r, c, load);
                       return (
                         <td key={c.key + c.label} className="px-3 py-2.5 text-slate-600 max-w-64 overflow-hidden text-ellipsis">
-                          {custom !== undefined ? custom : fmt(r[c.key], c.format)}
+                          {custom !== undefined ? custom
+                            : isPhoneCol(c) && r[c.key] != null && r[c.key] !== '' ? <PhoneText value={r[c.key]} />
+                            : fmt(r[c.key], c.format)}
                         </td>
                       );
                     })}

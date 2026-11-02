@@ -10,6 +10,7 @@ import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
 import { ColumnPicker } from '../components/ColumnPicker';
 import { useColumnPrefs } from '../lib/columnPrefs';
+import { PhoneText, PhoneModeToggle } from '../components/PhoneLink';
 
 import { useStickySort } from '../lib/stickySort';
 export interface StudentListItem {
@@ -283,6 +284,7 @@ export function StudentsPage() {
                 <Plus className="size-3.5" /> Add New
               </button>
             )}
+            <PhoneModeToggle />
             <ColumnPicker sections={pickerSections} onToggle={colPrefs.set} onSetMany={colPrefs.setMany} onReset={colPrefs.reset} />
             {user?.canExport && (
               <button
@@ -458,7 +460,7 @@ export function StudentsPage() {
                             </Link>
                           )
                         ) : (
-                          fmtCell(c.key, s[c.key])
+                          (/^phoneNumber[12]$/.test(c.key) && s[c.key] ? <PhoneText value={s[c.key]} /> : fmtCell(c.key, s[c.key]))
                         )}
                       </td>
                     ))}

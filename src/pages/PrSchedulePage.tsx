@@ -13,6 +13,7 @@ import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState, useUrlPatch } from '../lib/urlState';
 import { useRefreshOnFocus } from '../lib/refreshOnFocus';
 import { useZoomPref, ZoomControl } from '../components/ZoomControl';
+import { PhoneText, PhoneModeToggle } from '../components/PhoneLink';
 import { DateInput } from '../components/DateInput';
 import { fmtDate as toDMY } from '../lib/dates';
 import { PageHero } from '../components/PageHero';
@@ -405,7 +406,7 @@ export function PrSchedulePage() {
           Search
         </button>
         {/* Text/icon size, saved per user (user, 2026-10-29: titles and icons too small). */}
-        <div className="ml-auto"><ZoomControl pref={zoomPref} /></div>
+        <div className="ml-auto flex items-center gap-3"><PhoneModeToggle /><ZoomControl pref={zoomPref} /></div>
       </form>
 
       {error && (
@@ -682,7 +683,7 @@ function FragmentRows({
                       </button>
                       {phones[n(r.Std1ID)] && (
                         <span className="text-[9px] font-semibold text-[#1e5c97] bg-white/70 rounded px-1">
-                          {phones[n(r.Std1ID)]}
+                          <PhoneText value={phones[n(r.Std1ID)]} />
                         </span>
                       )}
                     </div>

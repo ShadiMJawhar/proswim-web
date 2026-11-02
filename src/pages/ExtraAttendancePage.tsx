@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Save, Search, AlertCircle, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { PhoneText, PhoneModeToggle } from '../components/PhoneLink';
 import { apiRequest, getStoredUser } from '../api/portalApi';
 import { DateInput } from '../components/DateInput';
 import { PageHero } from '../components/PageHero';
@@ -301,7 +302,8 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
           <input type="checkbox" checked={onlyActive} onChange={(e) => patch({ onlyActive: e.target.checked })} className="accent-[#1e5c97]" />
           Show Only Active Packs
         </label>
-        <button type="submit" className="btn-grad ml-auto rounded-lg text-xs font-semibold px-4 py-1.5">
+        <PhoneModeToggle className="ml-auto" />
+        <button type="submit" className="btn-grad rounded-lg text-xs font-semibold px-4 py-1.5">
           <Search className="size-3.5 inline -mt-0.5 mr-1" /> Search
         </button>
       </form>
@@ -387,7 +389,7 @@ export function ExtraAttendancePage({ memberships = false }: { memberships?: boo
                   <td className="px-2 py-1.5 text-center text-slate-600">{r.SessionsLeft}</td>
                   <td className="px-2 py-1.5 text-slate-600">{money(r.ExtraClassCost)}</td>
                   <td className="px-2 py-1.5 text-slate-600">{money(r.DuePayment)}</td>
-                  <td className="px-2 py-1.5 text-slate-600">{r.Phone}</td>
+                  <td className="px-2 py-1.5 text-slate-600"><PhoneText value={r.Phone} /></td>
                 </tr>
               ))}
               {rows.length === 0 && (

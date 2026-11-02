@@ -5,6 +5,7 @@ import { apiRequest, getStoredUser } from '../api/portalApi';
 import { useUrlState } from '../lib/urlState';
 import { useRefreshOnFocus } from '../lib/refreshOnFocus';
 import { useZoomPref, ZoomControl } from '../components/ZoomControl';
+import { PhoneText, PhoneModeToggle } from '../components/PhoneLink';
 import { fmtDate as toDMY } from '../lib/dates';
 import { coachStats, scheduleTotals } from '../lib/gscheduleStats';
 import { PageHero } from '../components/PageHero';
@@ -275,7 +276,7 @@ export function GSchedulePage() {
           Search
         </button>
         {/* Text/icon size, saved per user (user, 2026-10-29: titles and icons too small). */}
-        <div className="ml-auto"><ZoomControl pref={zoomPref} /></div>
+        <div className="ml-auto flex items-center gap-3"><PhoneModeToggle /><ZoomControl pref={zoomPref} /></div>
       </form>
 
       {error && (
@@ -434,7 +435,7 @@ export function GSchedulePage() {
                                     )}
                                     {canAct && shownPhones.has(phoneKey) && (
                                       <span className="text-[10px] font-semibold text-[#1e5c97] bg-[#e8f0f8] rounded px-1">
-                                        {s(r.Contact).replace(/,/g, '')}
+                                        <PhoneText value={s(r.Contact)} />
                                       </span>
                                     )}
                                     {isBirthdayNear(r.DOB) && (

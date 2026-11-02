@@ -12,6 +12,7 @@ import { fmtDate as toDMY } from '../lib/dates';
 import { AiStudentOverview } from '../components/AiStudentOverview';
 import { SchoolPicker } from '../components/SchoolPicker';
 import { SmartBack } from '../components/SmartBack';
+import { PhoneText } from '../components/PhoneLink';
 
 // Full proc row, keyed by original column names (PascalCase from SQL).
 type StudentRow = Record<string, unknown>;
@@ -391,6 +392,11 @@ export function StudentDetailPage() {
   }
 
   // Read-only rendering of the same field definitions (view mode).
+  // Phone fields in view mode: WhatsApp / copy link, dialled with the field's country code.
+  const PHONE_CODE_OF: Record<string, string> = {
+    StudentPhoneNumber1: 'StudentPhoneNumberCode1', StudentPhoneNumber2: 'StudentPhoneNumberCode2',
+    StudentEmergencyContactPhone: 'StudentEmergencyContactPhoneCode',
+  };
   function renderViewField(fd: FieldDef) {
     const v = row![fd.key];
     if (fd.type === 'checkbox') {
@@ -417,7 +423,11 @@ export function StudentDetailPage() {
     return (
       <div key={fd.key} className="flex items-baseline justify-between gap-4 text-sm py-0.5">
         <span className="text-slate-400 shrink-0">{fd.label}</span>
-        <span className="text-slate-800 text-right">{text}</span>
+        <span className="text-slate-800 text-right">
+          {PHONE_CODE_OF[fd.key] && text !== '-'
+            ? <PhoneText value={text} code={String(row![PHONE_CODE_OF[fd.key]] ?? '')} />
+            : text}
+        </span>
       </div>
     );
   }
@@ -803,7 +813,7 @@ function BulkHistory({ studentId }: { studentId: string }) {
                     <td className="px-2 py-2 text-slate-700">{str(r, 'BulkType') || '-'}</td>
                     <td className="px-2 py-2 text-slate-600">{toDMY(r.BulkDate)}</td>
                     <td className="px-2 py-2 text-slate-600">{str(r, 'BulkStatus') || '-'}</td>
-                    <td className="px-2 py-2 text-slate-600">{str(r, 'BulkPhone1') || '-'}</td>
+                    <td className="px-2 py-2 text-slate-600"><PhoneText value={str(r, 'BulkPhone1') || '-'} /></td>
                     <td className="px-2 py-2 text-slate-600">{toDMY(r.BulkSentDate)}</td>
                     <td className="px-2 py-2 text-slate-600 whitespace-normal max-w-48">{str(r, 'BulkSubject') || '-'}</td>
                     <td className="px-2 py-2 text-slate-600 whitespace-normal max-w-md">
@@ -920,7 +930,7 @@ function MedicalBanner({ row }: { row: StudentRow }) {
           {(ecName || ecPhone) && (
             <p className="text-sm text-red-700 mt-1.5 flex items-center gap-1.5">
               <PhoneCall className="size-3.5 shrink-0" />
-              Emergency contact: {ecName || '-'}{ecRelation ? ` (${ecRelation})` : ''}{ecPhone ? `: ${ecPhone}` : ''}
+              Emergency contact: {ecName || '-'}{ecRelation ? ` (${ecRelation})` : ''}{ecPhone ? <>: <PhoneText value={ecPhone} /></> : ''}
             </p>
           )}
         </div>
