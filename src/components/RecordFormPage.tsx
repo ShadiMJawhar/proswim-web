@@ -48,6 +48,9 @@ export interface FormField {
     url: (form: Record<string, unknown>) => string | null;
     pick?: (res: unknown) => Option[];
     autoFirst?: boolean;
+    /** Value to select when the current one is not in the new list (e.g. the
+     *  location's current semester from the same response); wins over autoFirst. */
+    autoPick?: (res: unknown) => string | number | undefined;
   };
 }
 
@@ -139,6 +142,13 @@ export interface RecordFormConfig {
   /** Extra submit buttons on create (legacy "Save and Register"): save, then go to `path`. */
   extraActions?: { label: string; path: (res: Record<string, unknown>, form: Record<string, unknown>) => string }[];
   heroSlide?: number;
+  /** Computed fields (legacy AutoPostBack arithmetic): called after every edit
+   *  with the next form and the changed key; the keys it returns are merged. */
+  derive?: (form: Record<string, unknown>, changedKey: string) => Record<string, unknown> | void;
+  /** Values fetched when a URL built from the form changes (legacy cascades that
+   *  fill text boxes, e.g. location → that location's current USD→LBP rate).
+   *  Applied on create, and on an existing record once the user has edited it. */
+  watch?: { url: (form: Record<string, unknown>) => string | null; apply: (res: unknown, form: Record<string, unknown>) => Record<string, unknown> }[];
   /** Client-side check before saving; return an error message to block the save. */
   validate?: (form: Record<string, unknown>) => string | null;
 }
@@ -253,7 +263,10 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
           setForm((cur) => {
             if (opts.some((o) => String(o.value) === String(cur[fd.key]))) return cur;
             const blank = typeof opts[0]?.value === 'number' ? 0 : '';
-            return { ...cur, [fd.key]: fd.optionsFrom!.autoFirst && opts.length ? opts[0].value : blank };
+            const picked = fd.optionsFrom!.autoPick?.(res);
+            const next = picked !== undefined && opts.some((o) => String(o.value) === String(picked)) ? picked
+              : fd.optionsFrom!.autoFirst && opts.length ? opts[0].value : blank;
+            return withDerived({ ...cur, [fd.key]: next }, fd.key);
           });
         })
         .catch(() => {});
@@ -262,8 +275,36 @@ export function RecordFormPage({ config }: { config: RecordFormConfig }) {
 
   function set(key: string, value: unknown) {
     touched.current = true;
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((f) => withDerived({ ...f, [key]: value }, key));
   }
+  function withDerived(next: Record<string, unknown>, key: string): Record<string, unknown> {
+    const extra = config.derive?.(next, key);
+    return extra ? { ...next, ...extra } : next;
+  }
+
+  // ── Watched values (RecordFormConfig.watch) ─────────────────────────────────
+  const watchUrls = useRef<string[]>([]);
+  const watchKey = (config.watch ?? []).map((w) => w.url(form) ?? '').join('|');
+  useEffect(() => {
+    (config.watch ?? []).forEach((w, i) => {
+      const url = w.url(form) ?? '';
+      if (watchUrls.current[i] === url) return;
+      watchUrls.current[i] = url;
+      if (!url) return;
+      apiRequest<unknown>(url)
+        .then((res) => {
+          if (watchUrls.current[i] !== url) return;
+          if (!isNew && !touched.current) return;
+          setForm((cur) => {
+            const patch = w.apply(res, cur);
+            const keys = Object.keys(patch);
+            if (!keys.length) return cur;
+            return keys.reduce((acc, k) => withDerived({ ...acc, [k]: patch[k] }, k), cur);
+          });
+        })
+        .catch(() => {});
+    });
+  }, [watchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save(action?: { path: (res: Record<string, unknown>, form: Record<string, unknown>) => string }) {
     setError('');

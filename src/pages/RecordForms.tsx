@@ -384,6 +384,18 @@ const student: RecordFormConfig = {
 
 // ── Expense (ExpensesIndividual.aspx) ────────────────────────────────────────
 
+// Legacy cascade: Location (the user's own by default) → that location's
+// semesters (default = its current one), its active coaches ("Other" = none)
+// and its current USD→LBP rate. The location is not stored on the expense;
+// the semester carries it. "Amount in LBP" is the legacy txtAmount arithmetic
+// (txtPaidAmount_TextChanged): paid in LBP as is, paid in USD × rate, floored.
+const expenseLbp = (f: Record<string, unknown>): number => {
+  const paid = Number(f.ExpensePaidAmount) || 0;
+  const rate = Number(f.ExpensePaidCurrencyRate) || 0;
+  return f.ExpensePaidCurrency === 'USD' ? Math.floor(paid * rate) : Math.floor(paid);
+};
+type SemResp = { semesters?: Record<string, unknown>[]; currentSemesterId?: number };
+
 const expense: RecordFormConfig = {
   title: 'Expense',
   listPath: '/expenses',
@@ -394,26 +406,53 @@ const expense: RecordFormConfig = {
   heroSlide: 3,
   createDefaults: {
     ExpensePaidCurrency: 'USD',
-    ExpensePaidCurrencyRate: 1500,
+    ExpensePaidCurrencyRate: 0,
+    ExpensePaidAmount: 0,
+    ExpenseAmount: 0,
     ExpenseType: 'Other',
     ExpenseCoachId: 0,
+  },
+  derive: (f, key) => (['ExpensePaidAmount', 'ExpensePaidCurrency', 'ExpensePaidCurrencyRate'].includes(key)
+    ? { ExpenseAmount: expenseLbp(f) } : undefined),
+  watch: [{
+    url: (f) => (Number(f.LocationId) ? `/api/portal/edit/currency-rate?locationId=${Number(f.LocationId)}` : null),
+    apply: (res) => ({ ExpensePaidCurrencyRate: Number((res as { rate?: number })?.rate) || 0 }),
+  }],
+  validate: (f) => {
+    if (!Number(f.LocationId)) return 'Choose a location.';
+    if (!Number(f.ExpenseSemesterId)) return 'Choose a semester.';
+    if (!(Number(f.ExpensePaidAmount) > 0)) return 'Enter the amount paid.';
+    if (f.ExpensePaidCurrency === 'USD' && !(Number(f.ExpensePaidCurrencyRate) > 0)) return 'Enter the USD to LBP rate.';
+    return null;
   },
   sections: [
     {
       title: 'Expense',
       fields: [
-        { key: 'ExpenseSemesterId', label: 'Semester', type: 'select', optionsKey: 'semesters' },
+        { key: 'LocationId', label: 'Location', type: 'select', optionsKey: 'locations', defaultToUserLocation: true, lockedFor: ['user'] },
+        { key: 'ExpenseSemesterId', label: 'Semester', type: 'select', optionsFrom: {
+          url: (f) => (Number(f.LocationId) ? `/api/portal/schedule/semesters?locationId=${Number(f.LocationId)}` : null),
+          // The form's own '-' option is the legacy 'Not Selected'.
+          pick: (res) => ((res as SemResp)?.semesters ?? [])
+            .map((r) => ({ value: Number(r.SemesterId ?? r.SemesterID ?? 0), label: String(r.SemesterName ?? '') }))
+            .filter((o) => o.value > 0),
+          autoPick: (res) => Number((res as SemResp)?.currentSemesterId) || undefined,
+        } },
         { key: 'ExpenseDate', label: 'Date', type: 'date' },
         { key: 'ExpensePaidAmount', label: 'Amount Paid', type: 'number' },
         { key: 'ExpensePaidCurrency', label: 'Currency', type: 'select', options: [
           { value: 'LBP', label: 'LBP' }, { value: 'USD', label: 'USD' },
         ] },
-        { key: 'ExpensePaidCurrencyRate', label: 'USD to LBP Rate', type: 'number' },
-        { key: 'ExpenseAmount', label: 'Amount (normalized)', type: 'number' },
+        { key: 'ExpensePaidCurrencyRate', label: 'USD to LBP Rate', type: 'number', hint: "the location's current rate" },
+        { key: 'ExpenseAmount', label: 'Amount in LBP', type: 'number', hint: 'auto: LBP as paid, USD × rate' },
         { key: 'ExpenseType', label: 'Type', type: 'select', options: [
           'Loan', 'Return/Refund', 'Tools', 'M.Sakr', 'Gr Pay By M.Sakr', 'Pr Pay By M.Sakr', 'Other',
         ].map((v) => ({ value: v, label: v })) },
-        { key: 'ExpenseCoachId', label: 'Coach', type: 'select', optionsKey: 'coaches' },
+        { key: 'ExpenseCoachId', label: 'Coach', type: 'select', optionsFrom: {
+          url: (f) => (Number(f.LocationId) ? `/api/portal/modules/lookups?locationId=${Number(f.LocationId)}` : null),
+          // The form's own '-' option is the legacy 'Other' (no coach).
+          pick: (res) => ((res as { coaches?: { value: number; label: string }[] })?.coaches) ?? [],
+        } },
         { key: 'ExpenseRemarks', label: 'Remarks', type: 'textarea' },
       ],
     },

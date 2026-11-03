@@ -39,7 +39,8 @@ const expenses: ModuleConfig = {
     { key: 'SemesterName', label: 'Semester' },
     { key: 'ExpenseDate', label: 'Date', format: 'date' },
     { key: 'ExpenseAmount', label: 'Amount', format: 'money', total: true },
-    { key: 'ExpensePaidAmount', label: 'Paid', format: 'money', total: true },
+    // Legacy footer: one sum per currency ('LB x', 'US y'), never LBP + USD added up.
+    { key: 'ExpensePaidAmount', label: 'Paid', format: 'money', totalBy: 'ExpensePaidCurrency' },
     { key: 'ExpensePaidCurrency', label: 'Curr' },
     { key: 'ExpenseType', label: 'Type' },
     { key: 'ExpenseRemarks_WCoach', label: 'Remarks' },
